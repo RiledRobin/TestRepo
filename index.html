@@ -26,12 +26,13 @@
       color: var(--ink);
       font-family: "Trebuchet MS", ui-rounded, system-ui, sans-serif;
     }
-    #wrap { width: min(960px, 100%); }
+    /* keeps the whole game, buttons included, on screen on shorter displays */
+    #wrap { width: min(960px, 100%, calc((100vh - 130px) * 1.2533)); }
     canvas {
       display: block;
       width: 100%;
       height: auto;
-      aspect-ratio: 3 / 2;
+      aspect-ratio: 960 / 766;
       border-radius: 12px;
       background: #d9d7e8;
       touch-action: none;
@@ -46,8 +47,8 @@
       justify-content: space-between;
       margin-top: 12px;
     }
-    .hint { opacity: .8; font-size: .92rem; }
-    .btns { display: flex; gap: 8px; }
+    .hint { opacity: .8; font-size: .9rem; max-width: 52ch; }
+    .btns { display: flex; flex-wrap: wrap; gap: 8px; }
     button {
       font: inherit;
       font-weight: 700;
@@ -61,14 +62,16 @@
     button:hover { border-color: var(--accent); }
     button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
     button:disabled { opacity: .45; cursor: default; border-color: var(--edge); }
+    button.ready { border-color: var(--accent); color: var(--accent); }
   </style>
 </head>
 <body>
   <main id="wrap">
-    <canvas id="game" width="960" height="640" aria-label="Tutor Rush, a game about running the help desk at a tutoring center"></canvas>
+    <canvas id="game" width="960" height="766" aria-label="Tutor Rush, a game about running the help desk at a tutoring center"></canvas>
     <div class="bar">
-      <span class="hint">Click or tap a table with a raised flag, or press 1 to 6. P pauses, M mutes.</span>
+      <span class="hint">Click a table with a raised flag, or press the number on it (numpad layout: 7 8 9 / 4 5 6 / 1 2 3). H hires a student tutor. P pauses, M mutes.</span>
       <span class="btns">
+        <button id="hireBtn" type="button" disabled>Hire student tutor</button>
         <button id="pauseBtn" type="button" disabled>Pause</button>
         <button id="soundBtn" type="button">Sound: on</button>
       </span>
@@ -84,35 +87,41 @@
      Everything you might want to tune is in CONFIG just below.
      ================================================================ */
   const CONFIG = {
-    shiftSeconds: 120,          // length of a shift
+    shiftSeconds: 180,          // length of a shift
     tutorSpeed: 340,            // how fast you walk (pixels per second)
+    helperSpeed: 190,           // how fast hired student tutors walk (slower than you)
     helpTime: [1.4, 2.6],       // seconds it takes to answer one question
     workTime: [5, 10],          // seconds a student works before raising the flag
     patienceStart: 18,          // seconds a student will wait, early in the shift
     patienceEnd: 11,            // ...and late in the shift
-    spawnStart: 6.5,            // seconds between new students, early
-    spawnEnd: 3.4,              // ...and late
+    spawnStart: 8,              // seconds between new students, early
+    spawnEnd: 3.2,               // ...and late
     questionsPerStudent: [2, 4],
     pointsPerAnswer: 10,
     maxSpeedBonus: 10,          // extra points for answering while patience is still high
     pointsHappyLeave: 15,       // bonus when a student finishes and leaves happy
     penaltyUnhappy: 15,         // points lost when a student storms out
     queueMax: 4,                // how many tables you can line up at once
+    moneyMin: 2,                // cash for helping a student who was about to give up
+    moneyMax: 14,               // cash for helping right after the flag goes up
+    hireCosts: [60, 140, 240],  // price of each student tutor; the list length is the team limit (max 3)
     ratings: [
-      { min: 450, label: "Tutor of the year" },
-      { min: 300, label: "Great shift" },
-      { min: 150, label: "Solid shift" },
+      { min: 700, label: "Tutor of the year" },
+      { min: 450, label: "Great shift" },
+      { min: 220, label: "Solid shift" },
       { min: -Infinity, label: "Rough shift" }
     ]
   };
 
-  const W = 960, H = 640, TAU = Math.PI * 2;
+  const W = 960, H = 766, TAU = Math.PI * 2;
+  const OY = (H - 640) / 2;     // vertical offset that centers the menu panels
   const FONT = '"Trebuchet MS", ui-rounded, system-ui, sans-serif';
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
   const pauseBtn = document.getElementById("pauseBtn");
   const soundBtn = document.getElementById("soundBtn");
+  const hireBtn = document.getElementById("hireBtn");
   const RM = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.round(W * dpr);
@@ -203,45 +212,58 @@
   const sfx = {
     flag()  { tone(880, 0.09, "triangle", 0.06); },
     help()  { tone(660, 0.10, "sine", 0.07); tone(990, 0.16, "sine", 0.07, 0.09); },
+    cash()  { tone(1318, 0.07, "square", 0.025, 0.12); tone(1760, 0.12, "square", 0.025, 0.19); },
+    hire()  { tone(523, 0.09, "triangle", 0.06); tone(659, 0.09, "triangle", 0.06, 0.09); tone(784, 0.2, "triangle", 0.06, 0.18); },
     upset() { tone(190, 0.30, "sawtooth", 0.05); },
     start() { tone(523, 0.10, "triangle", 0.06); tone(784, 0.18, "triangle", 0.06, 0.1); },
     end()   { tone(784, 0.12, "triangle", 0.06); tone(523, 0.12, "triangle", 0.06, 0.12); tone(392, 0.25, "triangle", 0.06, 0.24); }
   };
 
   /* ---------- saved best score ---------- */
+  const BEST_KEY = "tutorRush.best.v2";
   function loadBest() {
-    try { return parseInt(localStorage.getItem("tutorRush.best"), 10) || 0; } catch (e) { return 0; }
+    try { return parseInt(localStorage.getItem(BEST_KEY), 10) || 0; } catch (e) { return 0; }
   }
   function saveBest(v) {
-    try { localStorage.setItem("tutorRush.best", String(v)); } catch (e) { /* ignore */ }
+    try { localStorage.setItem(BEST_KEY, String(v)); } catch (e) { /* ignore */ }
   }
 
   /* ---------- the room ---------- */
   const SUBJECTS = [
-    { name: "Math",    color: "#3d7bff", qs: ["What is 7 x 8?", "What is 3/4 + 1/8?", "Solve for x: 2x = 14", "Area of a circle?"] },
-    { name: "Reading", color: "#ff6fb0", qs: ["What's the theme?", "What's the main idea?", "Who is narrating?", "What does bleak mean?"] },
-    { name: "Science", color: "#2fbf71", qs: ["Why is the sky blue?", "What do cells do?", "What is an atom?", "What's a food chain?"] },
-    { name: "Writing", color: "#8a63f2", qs: ["Where's the comma?", "Is this a run-on?", "How do I start?", "Can you fix my thesis?"] },
-    { name: "History", color: "#f2a30f", qs: ["Why did Rome fall?", "Who signed it?", "What started the war?", "When did this happen?"] },
-    { name: "Spanish", color: "#19b5d6", qs: ["Ser or estar?", "How do I say 'where'?", "Conjugate hablar?", "What's 'dog' in Spanish?"] }
+    { name: "Math",      color: "#3d7bff", qs: ["What is 7 x 8?", "What is 3/4 + 1/8?", "Solve for x: 2x = 14", "Area of a circle?"] },
+    { name: "Reading",   color: "#ff6fb0", qs: ["What's the theme?", "What's the main idea?", "Who is narrating?", "What does bleak mean?"] },
+    { name: "Science",   color: "#2fbf71", qs: ["Why is the sky blue?", "What do cells do?", "What is an atom?", "What's a food chain?"] },
+    { name: "Writing",   color: "#8a63f2", qs: ["Where's the comma?", "Is this a run-on?", "How do I start?", "Can you fix my thesis?"] },
+    { name: "History",   color: "#f2a30f", qs: ["Why did Rome fall?", "Who signed it?", "What started the war?", "When did this happen?"] },
+    { name: "Spanish",   color: "#19b5d6", qs: ["Ser or estar?", "How do I say 'where'?", "Conjugate hablar?", "What's 'dog' in Spanish?"] },
+    { name: "Chemistry", color: "#e8573f", qs: ["What's a mole?", "How do I balance this?", "What is pH?", "Why do atoms bond?"] },
+    { name: "Coding",    color: "#97a932", qs: ["Why is my loop stuck?", "What's a variable?", "What does null mean?", "Where's the typo?"] },
+    { name: "French",    color: "#3a4ea8", qs: ["Le or la?", "How do I say 'please'?", "Conjugate avoir?", "What's 'dog' in French?"] }
   ];
 
   const COLS = [200, 480, 760];
-  const ROWS = [205, 395];
-  const SHAPES = ["round", "square", "round", "square", "round", "square"];
-  const AISLE_Y = 280;     // walkway between the two rows of tables
-  const LOW_Y = 470;       // walkway in front of the second row
-  const HOME = { x: 480, y: 598 };
-  const DESK = { x: 370, y: 486, w: 220, h: 44 };
+  const ROWS = [215, 365, 515];
+  // The number you press for each table, in reading order (top-left to bottom-right).
+  // This matches the layout of a numpad: 7 8 9 on top, then 4 5 6, then 1 2 3.
+  // For plain 1 to 9 in reading order, change it to [1, 2, 3, 4, 5, 6, 7, 8, 9].
+  const NUMS = [7, 8, 9, 4, 5, 6, 1, 2, 3];
+  const AISLE_Y = 280;     // walkway by the door (students come in and leave this way)
+  const AISLE2_Y = 430;    // walkway between the second and third rows
+  const LOW_Y = 580;       // walkway in front of the third row
+  const HOME = { x: 480, y: 724 };
+  const DESK = { x: 370, y: 612, w: 220, h: 44 };
+  const HELPER_SPOTS = [{ x: 730, y: 692 }, { x: 795, y: 692 }, { x: 860, y: 692 }];
+  const MAX_HELPERS = Math.min(CONFIG.hireCosts.length, HELPER_SPOTS.length);
 
   const TABLES = [];
   ROWS.forEach((cy, r) => COLS.forEach((cx, c) => {
     const id = r * 3 + c;
-    TABLES.push({ id, cx, cy, shape: SHAPES[id], subject: SUBJECTS[id], student: null, flag: 0 });
+    TABLES.push({ id, num: NUMS[id], cx, cy, shape: id % 2 ? "square" : "round", subject: SUBJECTS[id], student: null, flag: 0 });
   }));
   const laneX = (t) => t.cx - 96;
+  const tableByNum = (n) => TABLES.find((t) => t.num === n);
 
-  /* Walkways for the tutor: a little graph of points so you never walk through furniture. */
+  /* Walkways for the tutors: a little graph of points so nobody walks through furniture. */
   const NODES = {};
   const ADJ = {};
   function addNode(id, x, y) { NODES[id] = { id, x, y }; ADJ[id] = []; }
@@ -252,16 +274,24 @@
   link("home", "c_low"); link("c_low", "c_mid");
   COLS.forEach((cx, c) => {
     addNode("a" + c, cx - 96, AISLE_Y);
+    addNode("b" + c, cx - 96, AISLE2_Y);
     addNode("l" + c, cx - 96, LOW_Y);
   });
   TABLES.forEach((t) => addNode("s" + t.id, laneX(t), t.cy + 22));
   link("l0", "c_mid"); link("c_mid", "l1"); link("l1", "l2");
   link("a0", "a1"); link("a1", "a2");
+  link("b0", "b1"); link("b1", "b2");
   for (let c = 0; c < 3; c++) {
     link("s" + c, "a" + c);
     link("a" + c, "s" + (c + 3));
-    link("s" + (c + 3), "l" + c);
+    link("s" + (c + 3), "b" + c);
+    link("b" + c, "s" + (c + 6));
+    link("s" + (c + 6), "l" + c);
   }
+  addNode("door", -40, AISLE_Y); link("door", "a0");
+  addNode("hub", 664, HELPER_SPOTS[0].y); link("l2", "hub");
+  HELPER_SPOTS.forEach((p, i) => { addNode("h" + i, p.x, p.y); link(i === 0 ? "hub" : "h" + (i - 1), "h" + i); });
+
   function route(from, to) {
     const dist = {}, prev = {}, done = {};
     Object.keys(NODES).forEach((k) => { dist[k] = Infinity; });
@@ -286,13 +316,41 @@
     return out;
   }
 
-  /* ---------- game state ---------- */
+  /* ---------- how students look ---------- */
   const SKINS = ["#f7d3b5", "#e8b48a", "#c68a5e", "#8f5a3a", "#5e3a24"];
   const HAIRS = ["#2b1a12", "#5a3a22", "#b5651d", "#e2b64d", "#3a3a4a", "#c0392b"];
   const SHIRTS = ["#ff8a5c", "#5cc8ff", "#ffd166", "#9b8cff", "#7ee081", "#ff7aa8", "#4dd0c4"];
 
-  const game = { state: "menu", time: 0, score: 0, helped: 0, upset: 0, spawnT: 0, best: loadBest(), newBest: false, overAt: 0, shake: 0 };
+  // A few students wear something that says who they are. It is purely cosmetic: they play like everyone else.
+  const PRIDE_PINS = [
+    ["#e40303", "#ff8c00", "#ffed00", "#008026", "#004dff", "#750787"],   // rainbow
+    ["#5bcefa", "#f5a9b8", "#ffffff", "#f5a9b8", "#5bcefa"],              // trans
+    ["#d60270", "#d60270", "#9b4f96", "#0038a8", "#0038a8"],              // bi
+    ["#ff218c", "#ffd800", "#21b1ff"],                                    // pan
+    ["#fcf434", "#ffffff", "#9c59d1", "#2c2c2c"],                         // nonbinary
+    ["#2b2b2b", "#a3a3a3", "#ffffff", "#800080"]                          // ace
+  ];
+  const HAIR_DYES = ["#ff8ad8", "#9b8cff", "#4fd1c5", "#7fd6ff"];
+  const GEAR_COLORS = ["#ff6b5e", "#4fa3ff", "#6be39a", "#ffd23f", "#c77dff"];
+
+  function makeLook() {
+    const r = Math.random();
+    if (r < 0.13) {
+      // pride pin, sometimes with dyed hair
+      return { pin: pick(PRIDE_PINS), dye: Math.random() < 0.65 ? pick(HAIR_DYES) : null };
+    }
+    if (r < 0.26) {
+      // headphones, a rainbow infinity pin, a fidget spinner on the table
+      const k = randInt(0, 2);
+      return { headphones: k !== 1 ? pick(GEAR_COLORS) : null, infinity: k === 1, fidget: k !== 0 ? pick(GEAR_COLORS) : null };
+    }
+    return null;
+  }
+
+  /* ---------- game state ---------- */
+  const game = { state: "menu", time: 0, score: 0, cash: 0, earned: 0, helped: 0, upset: 0, spawnT: 0, best: loadBest(), newBest: false, overAt: 0, shake: 0 };
   const students = [];
+  const helpers = [];
   const floaters = [];
   const tutor = { x: HOME.x, y: HOME.y, node: "home", path: [], target: null, state: "desk", queue: [], helpT: 0, helpDur: 1, walk: 0, dirY: 0 };
   const ui = { hover: -1 };
@@ -302,9 +360,10 @@
   const isSeated = (s) => s.state === "work" || s.state === "ask" || s.state === "help";
 
   function resetGame() {
-    game.time = 0; game.score = 0; game.helped = 0; game.upset = 0;
+    game.time = 0; game.score = 0; game.cash = 0; game.earned = 0; game.helped = 0; game.upset = 0;
     game.spawnT = 0.5; game.shake = 0; game.newBest = false;
     students.length = 0;
+    helpers.length = 0;
     floaters.length = 0;
     TABLES.forEach((t) => { t.student = null; t.flag = 0; });
     Object.assign(tutor, { x: HOME.x, y: HOME.y, node: "home", path: [], target: null, state: "desk", queue: [], helpT: 0, walk: 0, dirY: 0 });
@@ -319,11 +378,13 @@
     const free = TABLES.filter((t) => !t.student);
     if (!free.length) return false;
     const t = pick(free);
+    const look = makeLook();
     const s = {
       table: t, tid: t.id, x: -30, y: AISLE_Y, dirX: 1, dirY: 0,
       state: "enter",
       path: [{ x: laneX(t), y: AISLE_Y }, { x: laneX(t), y: t.cy - 12 }, { x: t.cx, y: t.cy - 12 }],
-      skin: pick(SKINS), hair: pick(HAIRS), hairStyle: randInt(0, 2), shirt: pick(SHIRTS),
+      look,
+      skin: pick(SKINS), hair: look && look.dye ? look.dye : pick(HAIRS), hairStyle: randInt(0, 2), shirt: pick(SHIRTS),
       qLeft: randInt(CONFIG.questionsPerStudent[0], CONFIG.questionsPerStudent[1]),
       timer: 0, patience: 1, patDur: 12, helpProg: 0,
       mood: "neutral", moodT: 0, say: "", sayT: 0,
@@ -402,19 +463,63 @@
     }
   }
 
-  /* ---------- the tutor ---------- */
-  function pathTo(goal) {
-    let prefix = [], start = tutor.node;
-    if (tutor.path.length) { prefix = [tutor.path[0]]; start = tutor.path[0]; }
+  /* ---------- walking along the walkways (used by you and the student tutors) ---------- */
+  function pathFor(o, goal) {
+    let prefix = [], start = o.node;
+    if (o.path.length) { prefix = [o.path[0]]; start = o.path[0]; }
     return prefix.concat(route(start, goal));
   }
+  function stepAlong(o, speed, dt) {
+    let rem = speed * dt;
+    if (o.path.length) o.walk += dt * speed * 0.038;
+    while (rem > 0 && o.path.length) {
+      const n = NODES[o.path[0]];
+      const dx = n.x - o.x, dy = n.y - o.y, d = Math.hypot(dx, dy);
+      if (d > 0) o.dirY = dy / d;
+      if (d <= rem) { o.x = n.x; o.y = n.y; o.node = n.id; o.path.shift(); rem -= d; }
+      else { o.x += (dx / d) * rem; o.y += (dy / d) * rem; rem = 0; }
+    }
+  }
+  function travelTime(o, goal, speed) {
+    let x = o.x, y = o.y, d = 0;
+    pathFor(o, goal).forEach((id) => { d += Math.hypot(NODES[id].x - x, NODES[id].y - y); x = NODES[id].x; y = NODES[id].y; });
+    return d / speed;
+  }
+
+  /* ---------- answering a question (same payout whoever does it) ---------- */
+  function finishAnswer(t, s) {
+    const pts = CONFIG.pointsPerAnswer + Math.round(CONFIG.maxSpeedBonus * s.patience);
+    // The sooner the student got help, the more money it earns.
+    const cash = Math.round(lerp(CONFIG.moneyMin, CONFIG.moneyMax, s.patience));
+    game.score += pts;
+    game.cash += cash;
+    game.earned += cash;
+    game.helped++;
+    floater("+" + pts, t.cx, t.cy - 110, "#6be39a");
+    floater("+$" + cash, t.cx, t.cy - 134, "#ffd23f");
+    sfx.help();
+    sfx.cash();
+    s.qLeft--;
+    if (s.qLeft > 0) {
+      s.state = "work";
+      s.timer = span(CONFIG.workTime);
+      s.mood = "happy"; s.moodT = 1.4;
+      s.say = "Thanks!"; s.sayT = 1.3;
+    } else {
+      game.score += CONFIG.pointsHappyLeave;
+      floater("+" + CONFIG.pointsHappyLeave + " ♥", t.cx, t.cy - 158, "#ffb3d1");
+      leaveSeat(s, "happy");
+    }
+  }
+
+  /* ---------- you (the tutor at the desk) ---------- */
   function planNext() {
     while (tutor.queue.length) {
       const id = tutor.queue.shift();
       const s = TABLES[id].student;
       if (s && s.state === "ask") {
         tutor.target = id;
-        tutor.path = pathTo("s" + id);
+        tutor.path = pathFor(tutor, "s" + id);
         tutor.state = "walk";
         return true;
       }
@@ -424,19 +529,8 @@
   function dispatch() {
     if (!planNext()) {
       tutor.target = null;
-      tutor.path = pathTo("home");
+      tutor.path = pathFor(tutor, "home");
       tutor.state = "walk";
-    }
-  }
-  function moveAlong(dt) {
-    let rem = CONFIG.tutorSpeed * dt;
-    if (tutor.path.length) tutor.walk += dt * 13;
-    while (rem > 0 && tutor.path.length) {
-      const n = NODES[tutor.path[0]];
-      const dx = n.x - tutor.x, dy = n.y - tutor.y, d = Math.hypot(dx, dy);
-      if (d > 0) tutor.dirY = dy / d;
-      if (d <= rem) { tutor.x = n.x; tutor.y = n.y; tutor.node = n.id; tutor.path.shift(); rem -= d; }
-      else { tutor.x += (dx / d) * rem; tutor.y += (dy / d) * rem; rem = 0; }
     }
   }
   function startHelp(id) {
@@ -449,23 +543,7 @@
   }
   function finishHelp() {
     const t = TABLES[tutor.target];
-    const s = t.student;
-    const pts = CONFIG.pointsPerAnswer + Math.round(CONFIG.maxSpeedBonus * s.patience);
-    game.score += pts;
-    game.helped++;
-    floater("+" + pts, t.cx, t.cy - 110, "#6be39a");
-    sfx.help();
-    s.qLeft--;
-    if (s.qLeft > 0) {
-      s.state = "work";
-      s.timer = span(CONFIG.workTime);
-      s.mood = "happy"; s.moodT = 1.4;
-      s.say = "Thanks!"; s.sayT = 1.3;
-    } else {
-      game.score += CONFIG.pointsHappyLeave;
-      floater("+" + CONFIG.pointsHappyLeave + " \u2665", t.cx, t.cy - 138, "#ffb3d1");
-      leaveSeat(s, "happy");
-    }
+    finishAnswer(t, t.student);
     tutor.target = null;
     dispatch();
   }
@@ -479,7 +557,7 @@
       if (tutor.queue.length) planNext();
     } else if (tutor.state === "walk") {
       if (tutor.target === null && tutor.queue.length) planNext();
-      moveAlong(dt);
+      stepAlong(tutor, CONFIG.tutorSpeed, dt);
       if (tutor.path.length === 0) {
         if (tutor.target !== null) startHelp(tutor.target);
         else { tutor.state = "desk"; tutor.x = HOME.x; tutor.y = HOME.y; tutor.node = "home"; }
@@ -501,6 +579,83 @@
     tutor.queue.push(id);
   }
 
+  /* ---------- student tutors (hired with cash, they find work on their own) ---------- */
+  const hireCost = () => (helpers.length < MAX_HELPERS ? CONFIG.hireCosts[helpers.length] : null);
+
+  function hire() {
+    if (game.state !== "play") return;
+    const cost = hireCost();
+    if (cost === null || game.cash < cost) return;
+    game.cash -= cost;
+    helpers.push({
+      x: -40, y: AISLE_Y, node: "door", path: [], target: null, state: "idle",
+      think: 0, helpT: 0, helpDur: 1, walk: 0, dirY: 0, spot: "h" + helpers.length,
+      skin: pick(SKINS), hair: pick(HAIRS), hairStyle: randInt(0, 2), glasses: Math.random() < 0.4
+    });
+    floater("-$" + cost, 150, 112, "#ff9d8f");
+    sfx.hire();
+    refreshHire();
+  }
+
+  function isClaimed(id) {
+    return tutor.target === id || tutor.queue.indexOf(id) !== -1 || helpers.some((h) => h.target === id);
+  }
+  // Pick the most urgent waiting student that this helper can actually reach in time.
+  function chooseTarget(h) {
+    let best = null, bestLeft = Infinity;
+    TABLES.forEach((t) => {
+      const s = t.student;
+      if (!s || s.state !== "ask" || isClaimed(t.id)) return;
+      const left = s.patience * s.patDur;
+      if (left - travelTime(h, "s" + t.id, CONFIG.helperSpeed) < 0.4) return;
+      if (left < bestLeft) { bestLeft = left; best = t.id; }
+    });
+    return best;
+  }
+  function updateHelper(h, dt) {
+    h.think -= dt;
+    if (h.state === "help") {
+      h.helpT += dt;
+      const t = TABLES[h.target];
+      const s = t.student;
+      if (!s || s.state !== "help") { h.target = null; h.state = "idle"; return; }
+      s.helpProg = clamp(h.helpT / h.helpDur, 0, 1);
+      if (h.helpT >= h.helpDur) {
+        finishAnswer(t, s);
+        h.target = null;
+        h.state = "idle";
+        h.think = 0;
+      }
+      return;
+    }
+    if (h.target !== null) {
+      const s = TABLES[h.target].student;
+      if (!(s && s.state === "ask")) { h.target = null; h.path = pathFor(h, h.spot); }  // someone else got there first
+    }
+    if (h.target === null && h.think <= 0) {
+      h.think = 0.25;
+      const id = chooseTarget(h);
+      if (id !== null) { h.target = id; h.path = pathFor(h, "s" + id); }
+    }
+    stepAlong(h, CONFIG.helperSpeed, dt);
+    if (h.path.length === 0) {
+      if (h.target !== null) {
+        const s = TABLES[h.target].student;
+        if (s && s.state === "ask") {
+          s.state = "help";
+          s.helpProg = 0;
+          h.state = "help";
+          h.helpT = 0;
+          h.helpDur = span(CONFIG.helpTime);
+        } else {
+          h.target = null;
+        }
+      } else if (h.node !== h.spot) {
+        h.path = pathFor(h, h.spot);
+      }
+    }
+  }
+
   /* ---------- main update ---------- */
   function update(dt) {
     game.time += dt;
@@ -518,6 +673,7 @@
     students.forEach((s) => updateStudent(s, dt));
     for (let i = students.length - 1; i >= 0; i--) if (students[i].done) students.splice(i, 1);
     updateTutor(dt);
+    helpers.forEach((h) => updateHelper(h, dt));
 
     TABLES.forEach((t) => {
       const want = t.student && (t.student.state === "ask" || t.student.state === "help") ? 1 : 0;
@@ -560,10 +716,20 @@
     muted = !muted;
     updateButtons();
   }
+  let hireLabel = "";
+  function refreshHire() {
+    const cost = hireCost();
+    const label = cost === null ? "Team is full" : "Hire student tutor ($" + cost + ")";
+    const off = game.state !== "play" || cost === null || game.cash < cost;
+    if (label !== hireLabel) { hireBtn.textContent = label; hireLabel = label; }
+    if (hireBtn.disabled !== off) hireBtn.disabled = off;
+    if (hireBtn.classList) hireBtn.classList.toggle("ready", !off);
+  }
   function updateButtons() {
     pauseBtn.disabled = !(game.state === "play" || game.state === "paused");
     pauseBtn.textContent = game.state === "paused" ? "Resume" : "Pause";
     soundBtn.textContent = muted ? "Sound: off" : "Sound: on";
+    refreshHire();
   }
 
   /* ---------- drawing: people ---------- */
@@ -600,10 +766,52 @@
     }
   }
 
+  // round pin with horizontal stripes
+  function drawPin(px, py, colors) {
+    const r = 8;
+    const h = (r * 2) / colors.length;
+    ctx.save();
+    ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); ctx.clip();
+    colors.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(px - r, py - r + i * h, r * 2, h + 0.6); });
+    ctx.restore();
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.8;
+    ctx.beginPath(); ctx.arc(px, py, r, 0, TAU); ctx.stroke();
+  }
+  // rainbow infinity symbol on a white badge
+  function drawInfinityPin(px, py) {
+    dot(px, py, 9, "#ffffff");
+    const g = ctx.createLinearGradient(px - 7, py, px + 7, py);
+    ["#ff4d4d", "#ff9f43", "#ffd93d", "#4cd964", "#4d8dff", "#9b5de5"].forEach((c, i) => g.addColorStop(i / 5, c));
+    ctx.strokeStyle = g; ctx.lineWidth = 2.2; ctx.lineCap = "round"; ctx.lineJoin = "round";
+    ctx.beginPath();
+    ctx.moveTo(px, py);
+    ctx.bezierCurveTo(px + 3, py - 5, px + 7, py - 5, px + 7, py);
+    ctx.bezierCurveTo(px + 7, py + 5, px + 3, py + 5, px, py);
+    ctx.bezierCurveTo(px - 3, py - 5, px - 7, py - 5, px - 7, py);
+    ctx.bezierCurveTo(px - 7, py + 5, px - 3, py + 5, px, py);
+    ctx.stroke();
+  }
+  function drawHeadphones(hx, hy, color) {
+    ctx.strokeStyle = "#2c3350"; ctx.lineWidth = 4.5; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.arc(hx, hy + 1, 20.5, Math.PI * 1.04, Math.PI * 1.96); ctx.stroke();
+    ctx.fillStyle = "#2c3350"; rr(hx - 25, hy - 6, 9, 17, 4); ctx.fill(); rr(hx + 16, hy - 6, 9, 17, 4); ctx.fill();
+    ctx.fillStyle = color; rr(hx - 24, hy - 4, 6, 13, 3); ctx.fill(); rr(hx + 18, hy - 4, 6, 13, 3); ctx.fill();
+  }
+  function drawSpinner(x, y, color, speed) {
+    const a = RM ? 0.4 : clock * speed;
+    for (let i = 0; i < 3; i++) {
+      const ang = a + (i * TAU) / 3;
+      dot(x + Math.cos(ang) * 6.5, y + Math.sin(ang) * 4.5, 3.6, color);
+    }
+    dot(x, y, 3.2, "#e8ebf2");
+    dot(x, y, 1.3, "#8a93b8");
+  }
+
   function drawPerson(x, y, o) {
     const bob = o.bob || 0;
     const hx = x, hy = y - 56 + bob;
     const back = o.view === "back";
+    const L = o.look;
     if (!o.seated) {
       ctx.fillStyle = "rgba(30,30,70,.18)";
       ctx.beginPath(); ctx.ellipse(x, y + 1, 19, 6, 0, 0, TAU); ctx.fill();
@@ -627,6 +835,10 @@
       ctx.beginPath(); ctx.moveTo(x - 7, y - 43 + bob); ctx.lineTo(x, y - 27 + bob); ctx.lineTo(x + 7, y - 43 + bob); ctx.stroke();
       ctx.fillStyle = "#ffffff"; rr(x - 5, y - 28 + bob, 10, 12, 2); ctx.fill();
       ctx.fillStyle = "#3d7bff"; ctx.fillRect(x - 5, y - 28 + bob, 10, 3);
+    }
+    if (L && !back) {
+      if (L.pin) drawPin(x + 11, y - 29 + bob, L.pin);
+      if (L.infinity) drawInfinityPin(x + 11, y - 29 + bob);
     }
     // hair that hangs behind the head
     if (o.hairStyle === 1) { ctx.fillStyle = o.hair; rr(hx - 19.5, hy - 12, 39, 36, 13); ctx.fill(); }
@@ -652,6 +864,7 @@
         ctx.beginPath(); ctx.moveTo(hx - 1.1, hy + 3); ctx.lineTo(hx + 1.1, hy + 3); ctx.stroke();
       }
     }
+    if (L && L.headphones) drawHeadphones(hx, hy, L.headphones);
   }
 
   function moodOf(s) {
@@ -663,10 +876,10 @@
 
   function drawWalker(s) {
     const view = s.dirY < -0.4 ? "back" : "front";
-    drawPerson(s.x, s.y, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, view, mood: moodOf(s), walk: s.walk });
+    drawPerson(s.x, s.y, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, look: s.look, view, mood: moodOf(s), walk: s.walk });
     if (s.state === "leave") {
       if (s.mood === "angry") outlinedText("!!", s.x + 20, s.y - 78, 18, "#ff6b5e");
-      else outlinedText("\u2665", s.x + 20, s.y - 78, 18, "#ffb3d1");
+      else outlinedText("♥", s.x + 20, s.y - 78, 18, "#ffb3d1");
     }
   }
 
@@ -678,6 +891,17 @@
       skin: "#c98e64", hair: "#35200f", hairStyle: 2, shirt: "#1fa38a",
       view, mood: tutor.state === "help" ? "happy" : "neutral",
       walk: tutor.walk, seated, glasses: true, lanyard: true, bob
+    });
+  }
+
+  function drawHelper(h) {
+    const helping = h.state === "help";
+    const moving = h.path.length > 0;
+    const view = moving && h.dirY < -0.2 ? "back" : "front";
+    const bob = helping && !RM ? Math.sin(clock * 9 + h.walk) * 1.2 : 0;
+    drawPerson(h.x, h.y, {
+      skin: h.skin, hair: h.hair, hairStyle: h.hairStyle, shirt: "#2d4fd6",
+      view, mood: helping ? "happy" : "neutral", walk: h.walk, lanyard: true, glasses: h.glasses, bob
     });
   }
 
@@ -735,7 +959,7 @@
       else if (s.state === "ask") bob = Math.sin(clock * 8) * (1 + (1 - s.patience) * 2);
       else if (s.state === "help") bob = Math.sin(clock * 6) * 1.6;
     }
-    drawPerson(t.cx, t.cy - 12, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, view: "front", mood: moodOf(s), seated: true, bob });
+    drawPerson(t.cx, t.cy - 12, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, look: s.look, view: "front", mood: moodOf(s), seated: true, bob });
   }
 
   function drawTable(t) {
@@ -750,11 +974,13 @@
     ctx.lineWidth = 2; ctx.strokeStyle = "#f0d3a6"; ctx.stroke();
 
     const hoverable = ui.hover === t.id && s && s.state === "ask";
-    if (hoverable || tutor.target === t.id) {
+    const tutorGoing = tutor.target === t.id;
+    const helperGoing = helpers.some((h) => h.target === t.id);
+    if (hoverable || tutorGoing || helperGoing) {
       tablePath(t, 0, 4);
       ctx.lineWidth = 4;
-      ctx.strokeStyle = tutor.target === t.id ? "#ffffff" : "#ffd23f";
-      if (tutor.target === t.id) ctx.setLineDash([8, 6]);
+      ctx.strokeStyle = tutorGoing ? "#ffffff" : hoverable ? "#ffd23f" : "#7aa2ff";
+      if (tutorGoing || helperGoing) ctx.setLineDash([8, 6]);
       ctx.stroke();
       ctx.setLineDash([]);
     }
@@ -770,6 +996,7 @@
       dot(cx + 8 + wr, cy - 16 + wr * 0.4, 4.8, s.skin);
       ctx.strokeStyle = "#f2c14e"; ctx.lineWidth = 2.5;
       ctx.beginPath(); ctx.moveTo(cx + 8 + wr, cy - 16 + wr * 0.4); ctx.lineTo(cx + 15 + wr, cy - 8 + wr * 0.4); ctx.stroke();
+      if (s.look && s.look.fidget) drawSpinner(cx + 25, cy - 1, s.look.fidget, s.state === "ask" ? 9 : 3.5);
     }
 
     // sign
@@ -778,6 +1005,14 @@
     ctx.fillStyle = t.subject.color; rr(cx - 38, cy + 6, 76, 7, 4); ctx.fill();
     ctx.fillRect(cx - 38, cy + 9, 76, 4);
     text(t.subject.name, cx, cy + 26, 13, "#232a4d", "center");
+
+    // the number to press for this table (turns gold while its flag is up)
+    const asking = s && s.state === "ask";
+    dot(cx - 48, cy + 16, 12, asking ? "#ffd23f" : "#232a4d");
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(cx - 48, cy + 16, 12, 0, TAU); ctx.stroke();
+    text(String(t.num), cx - 48, cy + 22, 16, asking ? "#232a4d" : "#ffffff", "center");
+
     drawFlag(t);
 
     if (!seated) return;
@@ -794,9 +1029,10 @@
     }
     const qi = tutor.queue.indexOf(t.id);
     if (qi !== -1) {
-      dot(cx - 44, cy - 102, 10, "#ffffff");
-      ctx.strokeStyle = "#232a4d"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx - 44, cy - 102, 10, 0, TAU); ctx.stroke();
-      text(String(qi + 1), cx - 44, cy - 97, 13, "#232a4d", "center");
+      const ord = ["1st", "2nd", "3rd", "4th"][qi] || String(qi + 1);
+      ctx.fillStyle = "#ffffff"; rr(cx - 68, cy - 109, 32, 14, 7); ctx.fill();
+      ctx.strokeStyle = "#232a4d"; ctx.lineWidth = 2; rr(cx - 68, cy - 109, 32, 14, 7); ctx.stroke();
+      text(ord, cx - 52, cy - 98, 11, "#232a4d", "center");
     }
   }
 
@@ -815,7 +1051,7 @@
     ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "#8e95cc"; ctx.lineWidth = 3;
     rr(350, 62, 260, 30, 5); ctx.fill(); ctx.stroke();
     text("Raise a flag. Get help.", 480, 83, 15, "#3d7bff", "center");
-    SUBJECTS.forEach((sub, i) => {
+    SUBJECTS.slice(0, 6).forEach((sub, i) => {
       const x = i < 3 ? 60 + i * 44 : 680 + (i - 3) * 44;
       ctx.fillStyle = sub.color; rr(x, 64, 30, 28, 3); ctx.fill();
       ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.fillRect(x + 5, 70, 20, 3); ctx.fillRect(x + 5, 77, 14, 3);
@@ -830,17 +1066,24 @@
     dot(8, 282, 2.5, "#f2c14e");
     ctx.fillStyle = "#7b86c9"; rr(12, 266, 40, 28, 6); ctx.fill();
 
+    // waiting spots for hired student tutors
+    ctx.fillStyle = "#cfd3f0"; rr(700, 646, 200, 90, 18); ctx.fill();
+    HELPER_SPOTS.forEach((p) => {
+      ctx.fillStyle = "#b3bae6";
+      ctx.beginPath(); ctx.ellipse(p.x, p.y + 2, 26, 9, 0, 0, TAU); ctx.fill();
+    });
+
     // rug, desk, chair
-    ctx.fillStyle = "#c3c9ee"; rr(300, 478, 360, 160, 26); ctx.fill();
-    ctx.fillStyle = "#4b5280"; rr(446, 556, 68, 50, 16); ctx.fill();
+    ctx.fillStyle = "#c3c9ee"; rr(300, DESK.y - 8, 360, 158, 26); ctx.fill();
+    ctx.fillStyle = "#4b5280"; rr(446, DESK.y + 70, 68, 50, 16); ctx.fill();
     ctx.fillStyle = "#5e3a28"; rr(DESK.x, DESK.y + 4, DESK.w, DESK.h, 8); ctx.fill();
     ctx.fillStyle = "#8f6044"; rr(DESK.x, DESK.y, DESK.w, DESK.h - 6, 8); ctx.fill();
-    ctx.fillStyle = "#ffffff"; rr(392, 492, 38, 28, 2); ctx.fill();
-    ctx.fillStyle = "#e6e9f5"; rr(396, 490, 38, 28, 2); ctx.fill();
-    ctx.fillStyle = "#cfd4e0"; rr(448, 490, 64, 32, 4); ctx.fill();
-    dot(480, 506, 4, "#e8ebf2");
-    dot(556, 508, 8, "#ffffff");
-    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(566, 508, 5, -1.2, 1.2); ctx.stroke();
+    ctx.fillStyle = "#ffffff"; rr(392, DESK.y + 6, 38, 28, 2); ctx.fill();
+    ctx.fillStyle = "#e6e9f5"; rr(396, DESK.y + 4, 38, 28, 2); ctx.fill();
+    ctx.fillStyle = "#cfd4e0"; rr(448, DESK.y + 4, 64, 32, 4); ctx.fill();
+    dot(480, DESK.y + 20, 4, "#e8ebf2");
+    dot(556, DESK.y + 22, 8, "#ffffff");
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(566, DESK.y + 22, 5, -1.2, 1.2); ctx.stroke();
 
     // plant
     ctx.fillStyle = "#c26b4a"; rr(896, 540, 34, 30, 6); ctx.fill();
@@ -855,7 +1098,9 @@
   function drawHUD() {
     ctx.fillStyle = "#232a4d"; ctx.fillRect(0, 0, W, 56);
     text("Score", 24, 22, 13, "#9aa3d6", "left");
-    text(String(game.score), 24, 48, 26, "#ffd23f", "left");
+    text(String(game.score), 24, 48, 26, "#ffffff", "left");
+    text("Cash", 140, 22, 13, "#9aa3d6", "left");
+    text("$" + game.cash, 140, 48, 26, "#ffd23f", "left");
     const left = CONFIG.shiftSeconds - game.time;
     const hurry = game.state === "play" && left < 15;
     text(fmtTime(left), 480, 34, 28, hurry && Math.floor(clock * 4) % 2 === 0 ? "#ff6b5e" : "#ffffff", "center");
@@ -868,8 +1113,10 @@
     text(String(game.helped), 850, 48, 26, "#6be39a", "right");
   }
 
-  function panel(x, y, w, h) {
+  function dim() {
     ctx.fillStyle = "rgba(23,27,51,.74)"; ctx.fillRect(0, 56, W, H - 56);
+  }
+  function panel(x, y, w, h) {
     ctx.fillStyle = "#232a4d"; ctx.strokeStyle = "#3b4478"; ctx.lineWidth = 3;
     rr(x, y, w, h, 20); ctx.fill(); ctx.stroke();
   }
@@ -879,37 +1126,44 @@
   }
 
   function drawOverlay() {
+    if (game.state === "play") return;
+    dim();
+    ctx.save();
+    ctx.translate(0, OY);
     if (game.state === "menu") {
-      panel(170, 100, 620, 440);
-      text("Tutor Rush", 480, 170, 58, "#ffd23f", "center");
-      text("Run the help desk for two minutes.", 480, 208, 20, "#c9d0f5", "center", "normal");
+      panel(170, 90, 620, 460);
+      text("Tutor Rush", 480, 160, 58, "#ffd23f", "center");
+      text("Run the help desk for three minutes.", 480, 198, 20, "#c9d0f5", "center", "normal");
       const lines = [
         "Students sit down and work on their own.",
         "When a flag goes up, they have a question.",
-        "Click that table (or press 1 to 6) to go help.",
-        "Patience meters drain while they wait.",
+        "Click that table, or press the number on it.",
+        "Faster help earns more points and more cash.",
+        "Spend cash on student tutors (they walk slowly).",
         "Anyone who storms out costs you points."
       ];
-      lines.forEach((l, i) => text(l, 480, 262 + i * 32, 19, "#ffffff", "center", "normal"));
-      button("Start your shift", 438);
-      text(game.best ? "Best score: " + game.best : "Or press Enter", 480, 516, 15, "#9aa3d6", "center", "normal");
+      lines.forEach((l, i) => text(l, 480, 248 + i * 31, 19, "#ffffff", "center", "normal"));
+      button("Start your shift", 454);
+      text(game.best ? "Best score: " + game.best : "Or press Enter", 480, 530, 15, "#9aa3d6", "center", "normal");
     } else if (game.state === "over") {
-      panel(170, 100, 620, 440);
+      panel(170, 90, 620, 460);
       let label = CONFIG.ratings[CONFIG.ratings.length - 1].label;
       for (const r of CONFIG.ratings) if (game.score >= r.min) { label = r.label; break; }
-      text("Shift over", 480, 160, 28, "#c9d0f5", "center");
-      text(label, 480, 214, 44, "#ffd23f", "center");
-      text(String(game.score), 480, 290, 72, "#ffffff", "center");
-      text("points", 480, 316, 18, "#9aa3d6", "center", "normal");
-      text("Questions answered: " + game.helped, 480, 364, 20, "#6be39a", "center", "normal");
-      text("Students who left upset: " + game.upset, 480, 394, 20, "#ff8479", "center", "normal");
-      text(game.newBest ? "New best score!" : "Best score: " + game.best, 480, 430, 20, game.newBest ? "#ffd23f" : "#9aa3d6", "center", "normal");
-      button("Play again", 456);
+      text("Shift over", 480, 150, 28, "#c9d0f5", "center");
+      text(label, 480, 204, 44, "#ffd23f", "center");
+      text(String(game.score), 480, 280, 72, "#ffffff", "center");
+      text("points", 480, 306, 18, "#9aa3d6", "center", "normal");
+      text("Questions answered: " + game.helped, 480, 346, 20, "#6be39a", "center", "normal");
+      text("Students who left upset: " + game.upset, 480, 374, 20, "#ff8479", "center", "normal");
+      text("Cash earned: $" + game.earned + "  (" + helpers.length + " student tutor" + (helpers.length === 1 ? "" : "s") + " hired)", 480, 402, 20, "#ffd23f", "center", "normal");
+      text(game.newBest ? "New best score!" : "Best score: " + game.best, 480, 436, 20, game.newBest ? "#ffd23f" : "#9aa3d6", "center", "normal");
+      button("Play again", 462);
     } else if (game.state === "paused") {
       panel(300, 240, 360, 150);
       text("Paused", 480, 308, 40, "#ffd23f", "center");
       text("Press P or Esc to resume", 480, 348, 18, "#c9d0f5", "center", "normal");
     }
+    ctx.restore();
   }
 
   function render() {
@@ -920,6 +1174,7 @@
     const items = [];
     TABLES.forEach((t) => items.push({ y: t.cy, draw: () => drawTable(t) }));
     students.forEach((s) => { if (!isSeated(s)) items.push({ y: s.y, draw: () => drawWalker(s) }); });
+    helpers.forEach((h) => items.push({ y: h.y, draw: () => drawHelper(h) }));
     items.push({ y: tutor.y, draw: drawTutor });
     items.sort((a, b) => a.y - b.y);
     items.forEach((it) => it.draw());
@@ -938,11 +1193,16 @@
     const r = canvas.getBoundingClientRect();
     return { x: ((e.clientX - r.left) * W) / r.width, y: ((e.clientY - r.top) * H) / r.height };
   }
+  // the table under the pointer; where two overlap, the one whose middle is closest wins
   function tableAt(x, y) {
+    let best = -1, bestD = Infinity;
     for (const t of TABLES) {
-      if (x >= t.cx - 74 && x <= t.cx + 74 && y >= t.cy - 118 && y <= t.cy + 48) return t.id;
+      if (x >= t.cx - 74 && x <= t.cx + 74 && y >= t.cy - 118 && y <= t.cy + 48) {
+        const d = Math.abs(y - (t.cy - 30));
+        if (d < bestD) { bestD = d; best = t.id; }
+      }
     }
-    return -1;
+    return best;
   }
   canvas.addEventListener("pointerdown", (e) => {
     ensureAudio();
@@ -961,13 +1221,23 @@
   window.addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
     const k = e.key;
-    if (k >= "1" && k <= "6") { requestHelp(Number(k) - 1); return; }
+    // number row and numpad (also works with NumLock off)
+    let d = 0;
+    if (e.code && /^(Digit|Numpad)[1-9]$/.test(e.code)) d = Number(e.code.slice(-1));
+    else if (k && k.length === 1 && k >= "1" && k <= "9") d = Number(k);
+    if (d) {
+      const t = tableByNum(d);
+      if (t) requestHelp(t.id);
+      return;
+    }
     if (k === "p" || k === "P" || k === "Escape") { togglePause(); return; }
     if (k === "m" || k === "M") { toggleMute(); return; }
+    if (k === "h" || k === "H") { hire(); return; }
     if ((k === "Enter" || k === " ") && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); primary(); }
   });
   pauseBtn.addEventListener("click", () => { togglePause(); pauseBtn.blur(); });
   soundBtn.addEventListener("click", () => { ensureAudio(); toggleMute(); soundBtn.blur(); });
+  hireBtn.addEventListener("click", () => { ensureAudio(); hire(); hireBtn.blur(); });
   document.addEventListener("visibilitychange", () => { if (document.hidden && game.state === "play") togglePause(); });
 
   /* ---------- loop ---------- */
@@ -981,6 +1251,7 @@
     clock += dt;
     if (game.state === "play") update(dt);
     render();
+    refreshHire();
   }
   updateButtons();
   requestAnimationFrame(frame);
