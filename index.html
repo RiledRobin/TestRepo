@@ -3,110 +3,988 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Deploy check. Edit test</title>
+  <title>Tutor Rush</title>
   <style>
     :root {
-      --ink: #1d2433;
-      --paper: #eef2f7;
-      --line: #c9d3e0;
-      --blue: #2f6df6;
-      --green: #1fa971;
+      --bg: #171b33;
+      --panel: #232a4d;
+      --edge: #3b4478;
+      --ink: #f4f6ff;
+      --accent: #ffd23f;
     }
     * { box-sizing: border-box; }
+    html, body { margin: 0; min-height: 100%; }
     body {
-      margin: 0;
       min-height: 100vh;
-      display: grid;
-      place-items: center;
-      padding: 24px;
-      background: var(--paper);
-      color: var(--ink);
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-      line-height: 1.5;
-    }
-    main { width: 100%; max-width: 440px; }
-    h1 { margin: 0 0 8px; font-size: 2.25rem; letter-spacing: -0.02em; }
-    p { margin: 0 0 24px; max-width: 42ch; }
-    ul { list-style: none; margin: 0 0 24px; padding: 0; border-top: 1px solid var(--line); }
-    li {
       display: flex;
-      justify-content: space-between;
-      padding: 10px 0;
-      border-bottom: 1px solid var(--line);
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      padding: 12px;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: "Trebuchet MS", ui-rounded, system-ui, sans-serif;
     }
-    .ok { color: var(--green); font-weight: 600; }
-    .pending { color: #7b879a; }
+    #wrap { width: min(960px, 100%); }
     canvas {
       display: block;
       width: 100%;
-      background: #fff;
-      border: 1px solid var(--line);
-      border-radius: 6px;
+      height: auto;
+      aspect-ratio: 3 / 2;
+      border-radius: 12px;
+      background: #d9d7e8;
+      touch-action: none;
+      user-select: none;
+      -webkit-user-select: none;
     }
-    canvas:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
-    small { display: block; margin-top: 8px; color: #566176; }
+    .bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 12px;
+    }
+    .hint { opacity: .8; font-size: .92rem; }
+    .btns { display: flex; gap: 8px; }
+    button {
+      font: inherit;
+      font-weight: 700;
+      color: var(--ink);
+      background: var(--panel);
+      border: 2px solid var(--edge);
+      border-radius: 8px;
+      padding: 8px 14px;
+      cursor: pointer;
+    }
+    button:hover { border-color: var(--accent); }
+    button:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+    button:disabled { opacity: .45; cursor: default; border-color: var(--edge); }
   </style>
 </head>
 <body>
-  <main>
-    <h1>Deploy check</h1>
-    <p>If you can read this, your GitHub repo and Cloudflare Pages are connected.</p>
-
-    <ul>
-      <li><span>Page loaded</span><span class="ok">Yes</span></li>
-      <li><span>JavaScript running</span><span id="js" class="pending">Checking</span></li>
-      <li><span>Loaded at</span><span id="time" class="pending">Checking</span></li>
-    </ul>
-
-    <canvas id="box" width="440" height="220" tabindex="0" aria-label="Test canvas: move the square with the arrow keys"></canvas>
-    <small>Click the box, then move the square with the arrow keys or WASD.</small>
+  <main id="wrap">
+    <canvas id="game" width="960" height="640" aria-label="Tutor Rush, a game about running the help desk at a tutoring center"></canvas>
+    <div class="bar">
+      <span class="hint">Click or tap a table with a raised flag, or press 1 to 6. P pauses, M mutes.</span>
+      <span class="btns">
+        <button id="pauseBtn" type="button" disabled>Pause</button>
+        <button id="soundBtn" type="button">Sound: on</button>
+      </span>
+    </div>
   </main>
 
-  <script>
-    // JavaScript check
-    var js = document.getElementById("js");
-    js.textContent = "Yes";
-    js.className = "ok";
+<script>
+(function () {
+  "use strict";
 
-    var time = document.getElementById("time");
-    time.textContent = new Date().toLocaleTimeString();
-    time.className = "ok";
+  /* ================================================================
+     Tutor Rush
+     Everything you might want to tune is in CONFIG just below.
+     ================================================================ */
+  const CONFIG = {
+    shiftSeconds: 120,          // length of a shift
+    tutorSpeed: 340,            // how fast you walk (pixels per second)
+    helpTime: [1.4, 2.6],       // seconds it takes to answer one question
+    workTime: [5, 10],          // seconds a student works before raising the flag
+    patienceStart: 18,          // seconds a student will wait, early in the shift
+    patienceEnd: 11,            // ...and late in the shift
+    spawnStart: 6.5,            // seconds between new students, early
+    spawnEnd: 3.4,              // ...and late
+    questionsPerStudent: [2, 4],
+    pointsPerAnswer: 10,
+    maxSpeedBonus: 10,          // extra points for answering while patience is still high
+    pointsHappyLeave: 15,       // bonus when a student finishes and leaves happy
+    penaltyUnhappy: 15,         // points lost when a student storms out
+    queueMax: 4,                // how many tables you can line up at once
+    ratings: [
+      { min: 450, label: "Tutor of the year" },
+      { min: 300, label: "Great shift" },
+      { min: 150, label: "Solid shift" },
+      { min: -Infinity, label: "Rough shift" }
+    ]
+  };
 
-    // Canvas and keyboard check
-    var canvas = document.getElementById("box");
-    var ctx = canvas.getContext("2d");
-    var player = { x: 200, y: 90, size: 40, speed: 4 };
-    var keys = {};
+  const W = 960, H = 640, TAU = Math.PI * 2;
+  const FONT = '"Trebuchet MS", ui-rounded, system-ui, sans-serif';
 
-    window.addEventListener("keydown", function (e) {
-      keys[e.key.toLowerCase()] = true;
-      if (e.key.indexOf("Arrow") === 0) e.preventDefault();
+  const canvas = document.getElementById("game");
+  const ctx = canvas.getContext("2d");
+  const pauseBtn = document.getElementById("pauseBtn");
+  const soundBtn = document.getElementById("soundBtn");
+  const RM = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  canvas.width = Math.round(W * dpr);
+  canvas.height = Math.round(H * dpr);
+
+  /* ---------- small helpers ---------- */
+  const rand = (a, b) => a + Math.random() * (b - a);
+  const randInt = (a, b) => Math.floor(rand(a, b + 1));
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+  const lerp = (a, b, t) => a + (b - a) * t;
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const span = (r) => rand(r[0], r[1]);
+
+  function rr(x, y, w, h, r) {
+    r = Math.min(r, w / 2, h / 2);
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+  function dot(x, y, r, color) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, TAU);
+    ctx.fill();
+  }
+  function text(str, x, y, size, color, align, weight) {
+    ctx.font = (weight || "bold") + " " + size + "px " + FONT;
+    ctx.textAlign = align || "left";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillStyle = color;
+    ctx.fillText(str, x, y);
+  }
+  function outlinedText(str, x, y, size, color) {
+    ctx.font = "bold " + size + "px " + FONT;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.lineJoin = "round";
+    ctx.lineWidth = 5;
+    ctx.strokeStyle = "#232a4d";
+    ctx.strokeText(str, x, y);
+    ctx.fillStyle = color;
+    ctx.fillText(str, x, y);
+  }
+  function wrapLines(str, maxW) {
+    const words = str.split(" ");
+    const lines = [];
+    let cur = "";
+    for (const w of words) {
+      const test = cur ? cur + " " + w : w;
+      if (ctx.measureText(test).width > maxW && cur) { lines.push(cur); cur = w; }
+      else cur = test;
+    }
+    if (cur) lines.push(cur);
+    return lines;
+  }
+
+  /* ---------- sound (tiny synthesized beeps, no files) ---------- */
+  let audioCtx = null;
+  let muted = false;
+  function ensureAudio() {
+    if (audioCtx) { if (audioCtx.state === "suspended") audioCtx.resume(); return; }
+    try {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    } catch (e) { audioCtx = null; }
+  }
+  function tone(freq, dur, type, vol, delay) {
+    if (muted || !audioCtx) return;
+    try {
+      const t0 = audioCtx.currentTime + (delay || 0);
+      const o = audioCtx.createOscillator();
+      const g = audioCtx.createGain();
+      o.type = type || "sine";
+      o.frequency.setValueAtTime(freq, t0);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.exponentialRampToValueAtTime(vol || 0.07, t0 + 0.012);
+      g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+      o.connect(g);
+      g.connect(audioCtx.destination);
+      o.start(t0);
+      o.stop(t0 + dur + 0.03);
+    } catch (e) { /* sound is optional */ }
+  }
+  const sfx = {
+    flag()  { tone(880, 0.09, "triangle", 0.06); },
+    help()  { tone(660, 0.10, "sine", 0.07); tone(990, 0.16, "sine", 0.07, 0.09); },
+    upset() { tone(190, 0.30, "sawtooth", 0.05); },
+    start() { tone(523, 0.10, "triangle", 0.06); tone(784, 0.18, "triangle", 0.06, 0.1); },
+    end()   { tone(784, 0.12, "triangle", 0.06); tone(523, 0.12, "triangle", 0.06, 0.12); tone(392, 0.25, "triangle", 0.06, 0.24); }
+  };
+
+  /* ---------- saved best score ---------- */
+  function loadBest() {
+    try { return parseInt(localStorage.getItem("tutorRush.best"), 10) || 0; } catch (e) { return 0; }
+  }
+  function saveBest(v) {
+    try { localStorage.setItem("tutorRush.best", String(v)); } catch (e) { /* ignore */ }
+  }
+
+  /* ---------- the room ---------- */
+  const SUBJECTS = [
+    { name: "Math",    color: "#3d7bff", qs: ["What is 7 x 8?", "What is 3/4 + 1/8?", "Solve for x: 2x = 14", "Area of a circle?"] },
+    { name: "Reading", color: "#ff6fb0", qs: ["What's the theme?", "What's the main idea?", "Who is narrating?", "What does bleak mean?"] },
+    { name: "Science", color: "#2fbf71", qs: ["Why is the sky blue?", "What do cells do?", "What is an atom?", "What's a food chain?"] },
+    { name: "Writing", color: "#8a63f2", qs: ["Where's the comma?", "Is this a run-on?", "How do I start?", "Can you fix my thesis?"] },
+    { name: "History", color: "#f2a30f", qs: ["Why did Rome fall?", "Who signed it?", "What started the war?", "When did this happen?"] },
+    { name: "Spanish", color: "#19b5d6", qs: ["Ser or estar?", "How do I say 'where'?", "Conjugate hablar?", "What's 'dog' in Spanish?"] }
+  ];
+
+  const COLS = [200, 480, 760];
+  const ROWS = [205, 395];
+  const SHAPES = ["round", "square", "round", "square", "round", "square"];
+  const AISLE_Y = 280;     // walkway between the two rows of tables
+  const LOW_Y = 470;       // walkway in front of the second row
+  const HOME = { x: 480, y: 598 };
+  const DESK = { x: 370, y: 486, w: 220, h: 44 };
+
+  const TABLES = [];
+  ROWS.forEach((cy, r) => COLS.forEach((cx, c) => {
+    const id = r * 3 + c;
+    TABLES.push({ id, cx, cy, shape: SHAPES[id], subject: SUBJECTS[id], student: null, flag: 0 });
+  }));
+  const laneX = (t) => t.cx - 96;
+
+  /* Walkways for the tutor: a little graph of points so you never walk through furniture. */
+  const NODES = {};
+  const ADJ = {};
+  function addNode(id, x, y) { NODES[id] = { id, x, y }; ADJ[id] = []; }
+  function link(a, b) { ADJ[a].push(b); ADJ[b].push(a); }
+  addNode("home", HOME.x, HOME.y);
+  addNode("c_low", 330, HOME.y);
+  addNode("c_mid", 330, LOW_Y);
+  link("home", "c_low"); link("c_low", "c_mid");
+  COLS.forEach((cx, c) => {
+    addNode("a" + c, cx - 96, AISLE_Y);
+    addNode("l" + c, cx - 96, LOW_Y);
+  });
+  TABLES.forEach((t) => addNode("s" + t.id, laneX(t), t.cy + 22));
+  link("l0", "c_mid"); link("c_mid", "l1"); link("l1", "l2");
+  link("a0", "a1"); link("a1", "a2");
+  for (let c = 0; c < 3; c++) {
+    link("s" + c, "a" + c);
+    link("a" + c, "s" + (c + 3));
+    link("s" + (c + 3), "l" + c);
+  }
+  function route(from, to) {
+    const dist = {}, prev = {}, done = {};
+    Object.keys(NODES).forEach((k) => { dist[k] = Infinity; });
+    dist[from] = 0;
+    for (;;) {
+      let u = null, best = Infinity;
+      for (const k in dist) if (!done[k] && dist[k] < best) { best = dist[k]; u = k; }
+      if (u === null || u === to) break;
+      done[u] = true;
+      ADJ[u].forEach((v) => {
+        const d = dist[u] + Math.hypot(NODES[u].x - NODES[v].x, NODES[u].y - NODES[v].y);
+        if (d < dist[v]) { dist[v] = d; prev[v] = u; }
+      });
+    }
+    const out = [];
+    let n = to;
+    while (n !== from) {
+      out.unshift(n);
+      n = prev[n];
+      if (n === undefined) return [];
+    }
+    return out;
+  }
+
+  /* ---------- game state ---------- */
+  const SKINS = ["#f7d3b5", "#e8b48a", "#c68a5e", "#8f5a3a", "#5e3a24"];
+  const HAIRS = ["#2b1a12", "#5a3a22", "#b5651d", "#e2b64d", "#3a3a4a", "#c0392b"];
+  const SHIRTS = ["#ff8a5c", "#5cc8ff", "#ffd166", "#9b8cff", "#7ee081", "#ff7aa8", "#4dd0c4"];
+
+  const game = { state: "menu", time: 0, score: 0, helped: 0, upset: 0, spawnT: 0, best: loadBest(), newBest: false, overAt: 0, shake: 0 };
+  const students = [];
+  const floaters = [];
+  const tutor = { x: HOME.x, y: HOME.y, node: "home", path: [], target: null, state: "desk", queue: [], helpT: 0, helpDur: 1, walk: 0, dirY: 0 };
+  const ui = { hover: -1 };
+  let clock = 0;
+
+  const progress = () => clamp(game.time / CONFIG.shiftSeconds, 0, 1);
+  const isSeated = (s) => s.state === "work" || s.state === "ask" || s.state === "help";
+
+  function resetGame() {
+    game.time = 0; game.score = 0; game.helped = 0; game.upset = 0;
+    game.spawnT = 0.5; game.shake = 0; game.newBest = false;
+    students.length = 0;
+    floaters.length = 0;
+    TABLES.forEach((t) => { t.student = null; t.flag = 0; });
+    Object.assign(tutor, { x: HOME.x, y: HOME.y, node: "home", path: [], target: null, state: "desk", queue: [], helpT: 0, walk: 0, dirY: 0 });
+  }
+
+  function floater(str, x, y, color) {
+    floaters.push({ str, x, y, color, t: 0, life: 1.5 });
+  }
+
+  /* ---------- students ---------- */
+  function spawnStudent() {
+    const free = TABLES.filter((t) => !t.student);
+    if (!free.length) return false;
+    const t = pick(free);
+    const s = {
+      table: t, tid: t.id, x: -30, y: AISLE_Y, dirX: 1, dirY: 0,
+      state: "enter",
+      path: [{ x: laneX(t), y: AISLE_Y }, { x: laneX(t), y: t.cy - 12 }, { x: t.cx, y: t.cy - 12 }],
+      skin: pick(SKINS), hair: pick(HAIRS), hairStyle: randInt(0, 2), shirt: pick(SHIRTS),
+      qLeft: randInt(CONFIG.questionsPerStudent[0], CONFIG.questionsPerStudent[1]),
+      timer: 0, patience: 1, patDur: 12, helpProg: 0,
+      mood: "neutral", moodT: 0, say: "", sayT: 0,
+      question: "", lastQ: -1, walk: rand(0, 6), bob: rand(0, 6)
+    };
+    t.student = s;
+    students.push(s);
+    return true;
+  }
+
+  function walkPath(o, dist) {
+    while (dist > 0 && o.path.length) {
+      const n = o.path[0];
+      const dx = n.x - o.x, dy = n.y - o.y, d = Math.hypot(dx, dy);
+      if (d > 0) { o.dirX = dx / d; o.dirY = dy / d; }
+      if (d <= dist) { o.x = n.x; o.y = n.y; o.path.shift(); dist -= d; }
+      else { o.x += (dx / d) * dist; o.y += (dy / d) * dist; dist = 0; }
+    }
+    return o.path.length === 0;
+  }
+
+  function startAsking(s) {
+    const subj = s.table.subject;
+    let i;
+    do { i = randInt(0, subj.qs.length - 1); } while (i === s.lastQ && subj.qs.length > 1);
+    s.lastQ = i;
+    s.question = subj.qs[i];
+    s.patDur = lerp(CONFIG.patienceStart, CONFIG.patienceEnd, progress()) * rand(0.85, 1.15);
+    s.patience = 1;
+    s.state = "ask";
+    sfx.flag();
+  }
+
+  function leaveSeat(s, mood) {
+    const t = s.table;
+    t.student = null;
+    s.table = null;
+    s.state = "leave";
+    s.mood = mood;
+    s.moodT = 999;
+    s.speed = mood === "angry" ? 230 : 160;
+    const lx = t.cx - 96;
+    s.path = [{ x: lx, y: s.y }, { x: lx, y: AISLE_Y }, { x: -50, y: AISLE_Y }];
+  }
+
+  function storm(s) {
+    const t = s.table;
+    game.score -= CONFIG.penaltyUnhappy;
+    game.upset++;
+    floater("-" + CONFIG.penaltyUnhappy, t.cx, t.cy - 110, "#ff6b5e");
+    if (!RM) game.shake = 0.25;
+    sfx.upset();
+    leaveSeat(s, "angry");
+  }
+
+  function updateStudent(s, dt) {
+    s.walk += dt * 11;
+    s.bob += dt;
+    if (s.moodT > 0 && s.state !== "leave") { s.moodT -= dt; if (s.moodT <= 0) s.mood = "neutral"; }
+    if (s.sayT > 0) s.sayT -= dt;
+    switch (s.state) {
+      case "enter":
+        if (walkPath(s, 165 * dt)) { s.state = "work"; s.timer = span(CONFIG.workTime); }
+        break;
+      case "work":
+        s.timer -= dt;
+        if (s.timer <= 0) startAsking(s);
+        break;
+      case "ask":
+        s.patience -= dt / s.patDur;
+        if (s.patience <= 0) { s.patience = 0; storm(s); }
+        break;
+      case "leave":
+        if (walkPath(s, s.speed * dt)) s.done = true;
+        break;
+    }
+  }
+
+  /* ---------- the tutor ---------- */
+  function pathTo(goal) {
+    let prefix = [], start = tutor.node;
+    if (tutor.path.length) { prefix = [tutor.path[0]]; start = tutor.path[0]; }
+    return prefix.concat(route(start, goal));
+  }
+  function planNext() {
+    while (tutor.queue.length) {
+      const id = tutor.queue.shift();
+      const s = TABLES[id].student;
+      if (s && s.state === "ask") {
+        tutor.target = id;
+        tutor.path = pathTo("s" + id);
+        tutor.state = "walk";
+        return true;
+      }
+    }
+    return false;
+  }
+  function dispatch() {
+    if (!planNext()) {
+      tutor.target = null;
+      tutor.path = pathTo("home");
+      tutor.state = "walk";
+    }
+  }
+  function moveAlong(dt) {
+    let rem = CONFIG.tutorSpeed * dt;
+    if (tutor.path.length) tutor.walk += dt * 13;
+    while (rem > 0 && tutor.path.length) {
+      const n = NODES[tutor.path[0]];
+      const dx = n.x - tutor.x, dy = n.y - tutor.y, d = Math.hypot(dx, dy);
+      if (d > 0) tutor.dirY = dy / d;
+      if (d <= rem) { tutor.x = n.x; tutor.y = n.y; tutor.node = n.id; tutor.path.shift(); rem -= d; }
+      else { tutor.x += (dx / d) * rem; tutor.y += (dy / d) * rem; rem = 0; }
+    }
+  }
+  function startHelp(id) {
+    const s = TABLES[id].student;
+    s.state = "help";
+    s.helpProg = 0;
+    tutor.state = "help";
+    tutor.helpT = 0;
+    tutor.helpDur = span(CONFIG.helpTime);
+  }
+  function finishHelp() {
+    const t = TABLES[tutor.target];
+    const s = t.student;
+    const pts = CONFIG.pointsPerAnswer + Math.round(CONFIG.maxSpeedBonus * s.patience);
+    game.score += pts;
+    game.helped++;
+    floater("+" + pts, t.cx, t.cy - 110, "#6be39a");
+    sfx.help();
+    s.qLeft--;
+    if (s.qLeft > 0) {
+      s.state = "work";
+      s.timer = span(CONFIG.workTime);
+      s.mood = "happy"; s.moodT = 1.4;
+      s.say = "Thanks!"; s.sayT = 1.3;
+    } else {
+      game.score += CONFIG.pointsHappyLeave;
+      floater("+" + CONFIG.pointsHappyLeave + " \u2665", t.cx, t.cy - 138, "#ffb3d1");
+      leaveSeat(s, "happy");
+    }
+    tutor.target = null;
+    dispatch();
+  }
+  function updateTutor(dt) {
+    tutor.queue = tutor.queue.filter((id) => { const s = TABLES[id].student; return s && s.state === "ask"; });
+    if (tutor.state === "walk" && tutor.target !== null) {
+      const s = TABLES[tutor.target].student;
+      if (!(s && s.state === "ask")) { tutor.target = null; dispatch(); }
+    }
+    if (tutor.state === "desk") {
+      if (tutor.queue.length) planNext();
+    } else if (tutor.state === "walk") {
+      if (tutor.target === null && tutor.queue.length) planNext();
+      moveAlong(dt);
+      if (tutor.path.length === 0) {
+        if (tutor.target !== null) startHelp(tutor.target);
+        else { tutor.state = "desk"; tutor.x = HOME.x; tutor.y = HOME.y; tutor.node = "home"; }
+      }
+    } else if (tutor.state === "help") {
+      tutor.helpT += dt;
+      const s = TABLES[tutor.target].student;
+      s.helpProg = clamp(tutor.helpT / tutor.helpDur, 0, 1);
+      if (tutor.helpT >= tutor.helpDur) finishHelp();
+    }
+  }
+
+  function requestHelp(id) {
+    if (game.state !== "play") return;
+    const s = TABLES[id].student;
+    if (!s || s.state !== "ask") return;
+    if (tutor.target === id || tutor.queue.indexOf(id) !== -1) return;
+    if (tutor.queue.length >= CONFIG.queueMax) return;
+    tutor.queue.push(id);
+  }
+
+  /* ---------- main update ---------- */
+  function update(dt) {
+    game.time += dt;
+    if (game.time >= CONFIG.shiftSeconds) { endShift(); return; }
+
+    game.spawnT -= dt;
+    if (game.spawnT <= 0) {
+      if (spawnStudent()) {
+        game.spawnT = (students.length <= 1 ? 2.5 : lerp(CONFIG.spawnStart, CONFIG.spawnEnd, progress())) * rand(0.8, 1.2);
+      } else {
+        game.spawnT = 0.8;
+      }
+    }
+
+    students.forEach((s) => updateStudent(s, dt));
+    for (let i = students.length - 1; i >= 0; i--) if (students[i].done) students.splice(i, 1);
+    updateTutor(dt);
+
+    TABLES.forEach((t) => {
+      const want = t.student && (t.student.state === "ask" || t.student.state === "help") ? 1 : 0;
+      t.flag += clamp(want - t.flag, -dt * 5, dt * 5);
     });
-    window.addEventListener("keyup", function (e) {
-      keys[e.key.toLowerCase()] = false;
+    for (let i = floaters.length - 1; i >= 0; i--) {
+      const f = floaters[i];
+      f.t += dt;
+      f.y -= 34 * dt;
+      if (f.t >= f.life) floaters.splice(i, 1);
+    }
+    if (game.shake > 0) game.shake = Math.max(0, game.shake - dt);
+  }
+
+  function startGame() {
+    ensureAudio();
+    resetGame();
+    game.state = "play";
+    sfx.start();
+    updateButtons();
+  }
+  function endShift() {
+    game.state = "over";
+    game.overAt = performance.now();
+    if (game.score > game.best) { game.best = game.score; game.newBest = true; saveBest(game.best); }
+    sfx.end();
+    updateButtons();
+  }
+  function togglePause() {
+    if (game.state === "play") game.state = "paused";
+    else if (game.state === "paused") game.state = "play";
+    updateButtons();
+  }
+  function primary() {
+    if (game.state === "menu") startGame();
+    else if (game.state === "over") { if (performance.now() - game.overAt > 700) startGame(); }
+    else if (game.state === "paused") togglePause();
+  }
+  function toggleMute() {
+    muted = !muted;
+    updateButtons();
+  }
+  function updateButtons() {
+    pauseBtn.disabled = !(game.state === "play" || game.state === "paused");
+    pauseBtn.textContent = game.state === "paused" ? "Resume" : "Pause";
+    soundBtn.textContent = muted ? "Sound: off" : "Sound: on";
+  }
+
+  /* ---------- drawing: people ---------- */
+  function drawFace(hx, hy, mood) {
+    ctx.strokeStyle = "#2b2230";
+    ctx.fillStyle = "#2b2230";
+    ctx.lineWidth = 2;
+    ctx.lineCap = "round";
+    if (mood === "happy") {
+      ctx.beginPath(); ctx.arc(hx - 6.5, hy + 3.5, 2.8, Math.PI, TAU); ctx.stroke();
+      ctx.beginPath(); ctx.arc(hx + 6.5, hy + 3.5, 2.8, Math.PI, TAU); ctx.stroke();
+      dot(hx - 11, hy + 8, 3, "rgba(255,120,150,.45)");
+      dot(hx + 11, hy + 8, 3, "rgba(255,120,150,.45)");
+    } else {
+      dot(hx - 6.5, hy + 3, 2.3, "#2b2230");
+      dot(hx + 6.5, hy + 3, 2.3, "#2b2230");
+    }
+    if (mood === "upset" || mood === "angry") {
+      ctx.beginPath(); ctx.moveTo(hx - 11, hy - 4); ctx.lineTo(hx - 3, hy - 0.5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(hx + 11, hy - 4); ctx.lineTo(hx + 3, hy - 0.5); ctx.stroke();
+    } else if (mood === "worried") {
+      ctx.beginPath(); ctx.moveTo(hx - 11, hy - 0.5); ctx.lineTo(hx - 3, hy - 4); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(hx + 11, hy - 0.5); ctx.lineTo(hx + 3, hy - 4); ctx.stroke();
+    }
+    ctx.beginPath();
+    if (mood === "happy") ctx.arc(hx, hy + 7, 5.5, 0.15 * Math.PI, 0.85 * Math.PI);
+    else if (mood === "neutral") ctx.arc(hx, hy + 8, 3.6, 0.2 * Math.PI, 0.8 * Math.PI);
+    else if (mood === "worried") { ctx.moveTo(hx - 3.5, hy + 11); ctx.lineTo(hx + 3.5, hy + 11); }
+    else ctx.arc(hx, hy + 14, 4.8, 1.2 * Math.PI, 1.8 * Math.PI);
+    ctx.stroke();
+    if (mood === "worried") {
+      ctx.fillStyle = "#6ec1ff";
+      ctx.beginPath(); ctx.moveTo(hx + 16, hy - 12); ctx.quadraticCurveTo(hx + 20, hy - 5, hx + 16, hy - 3); ctx.quadraticCurveTo(hx + 12, hy - 5, hx + 16, hy - 12); ctx.fill();
+    }
+  }
+
+  function drawPerson(x, y, o) {
+    const bob = o.bob || 0;
+    const hx = x, hy = y - 56 + bob;
+    const back = o.view === "back";
+    if (!o.seated) {
+      ctx.fillStyle = "rgba(30,30,70,.18)";
+      ctx.beginPath(); ctx.ellipse(x, y + 1, 19, 6, 0, 0, TAU); ctx.fill();
+      const sw = Math.sin(o.walk || 0) * 3;
+      ctx.fillStyle = "#39406b";
+      rr(x - 13, y - 10 + sw, 11, 11, 3); ctx.fill();
+      rr(x + 2, y - 10 - sw, 11, 11, 3); ctx.fill();
+    }
+    ctx.fillStyle = o.shirt;
+    rr(x - 21, y - 44 + bob, 42, 38, 14); ctx.fill();
+    if (!o.seated) {
+      const as = Math.sin(o.walk || 0) * 2.5;
+      ctx.fillStyle = o.shirt;
+      rr(x - 29, y - 40 + bob + as, 10, 24, 5); ctx.fill();
+      rr(x + 19, y - 40 + bob - as, 10, 24, 5); ctx.fill();
+      dot(x - 24, y - 14 + bob + as, 4.5, o.skin);
+      dot(x + 24, y - 14 + bob - as, 4.5, o.skin);
+    }
+    if (o.lanyard && !back) {
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 2.5; ctx.lineJoin = "round";
+      ctx.beginPath(); ctx.moveTo(x - 7, y - 43 + bob); ctx.lineTo(x, y - 27 + bob); ctx.lineTo(x + 7, y - 43 + bob); ctx.stroke();
+      ctx.fillStyle = "#ffffff"; rr(x - 5, y - 28 + bob, 10, 12, 2); ctx.fill();
+      ctx.fillStyle = "#3d7bff"; ctx.fillRect(x - 5, y - 28 + bob, 10, 3);
+    }
+    // hair that hangs behind the head
+    if (o.hairStyle === 1) { ctx.fillStyle = o.hair; rr(hx - 19.5, hy - 12, 39, 36, 13); ctx.fill(); }
+    if (o.hairStyle === 2) dot(hx, hy - 21, 7.5, o.hair);
+    if (back) {
+      dot(hx - 18, hy + 3, 3.2, o.skin);
+      dot(hx + 18, hy + 3, 3.2, o.skin);
+      dot(hx, hy, 18.5, o.hair);
+    } else {
+      dot(hx, hy, 18, o.skin);
+      ctx.fillStyle = o.hair;
+      ctx.beginPath();
+      ctx.moveTo(hx - 18, hy - 2);
+      ctx.arc(hx, hy, 18.5, Math.PI, TAU);
+      ctx.quadraticCurveTo(hx + 2, hy - 14, hx - 18, hy - 2);
+      ctx.closePath();
+      ctx.fill();
+      drawFace(hx, hy, o.mood || "neutral");
+      if (o.glasses) {
+        ctx.strokeStyle = "#1c1f33"; ctx.lineWidth = 1.8;
+        ctx.beginPath(); ctx.arc(hx - 6.5, hy + 3, 5.4, 0, TAU); ctx.stroke();
+        ctx.beginPath(); ctx.arc(hx + 6.5, hy + 3, 5.4, 0, TAU); ctx.stroke();
+        ctx.beginPath(); ctx.moveTo(hx - 1.1, hy + 3); ctx.lineTo(hx + 1.1, hy + 3); ctx.stroke();
+      }
+    }
+  }
+
+  function moodOf(s) {
+    if (s.state === "leave") return s.mood;
+    if (s.mood === "happy" && s.moodT > 0) return "happy";
+    if (s.state === "ask") return s.patience > 0.6 ? "neutral" : s.patience > 0.3 ? "worried" : "upset";
+    return "neutral";
+  }
+
+  function drawWalker(s) {
+    const view = s.dirY < -0.4 ? "back" : "front";
+    drawPerson(s.x, s.y, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, view, mood: moodOf(s), walk: s.walk });
+    if (s.state === "leave") {
+      if (s.mood === "angry") outlinedText("!!", s.x + 20, s.y - 78, 18, "#ff6b5e");
+      else outlinedText("\u2665", s.x + 20, s.y - 78, 18, "#ffb3d1");
+    }
+  }
+
+  function drawTutor() {
+    const seated = tutor.state === "desk";
+    const view = seated || (tutor.state === "walk" && tutor.dirY < -0.2) ? "back" : "front";
+    const bob = tutor.state === "help" && !RM ? Math.sin(clock * 9) * 1.2 : 0;
+    drawPerson(tutor.x, tutor.y, {
+      skin: "#c98e64", hair: "#35200f", hairStyle: 2, shirt: "#1fa38a",
+      view, mood: tutor.state === "help" ? "happy" : "neutral",
+      walk: tutor.walk, seated, glasses: true, lanyard: true, bob
     });
+  }
 
-    function update() {
-      if (keys["arrowleft"] || keys["a"]) player.x -= player.speed;
-      if (keys["arrowright"] || keys["d"]) player.x += player.speed;
-      if (keys["arrowup"] || keys["w"]) player.y -= player.speed;
-      if (keys["arrowdown"] || keys["s"]) player.y += player.speed;
-      player.x = Math.max(0, Math.min(canvas.width - player.size, player.x));
-      player.y = Math.max(0, Math.min(canvas.height - player.size, player.y));
+  /* ---------- drawing: tables ---------- */
+  function tablePath(t, dy, grow) {
+    grow = grow || 0;
+    if (t.shape === "round") { ctx.beginPath(); ctx.ellipse(t.cx, t.cy + dy, 54 + grow, 37 + grow, 0, 0, TAU); }
+    else rr(t.cx - 54 - grow, t.cy - 35 + dy - grow, 108 + grow * 2, 72 + grow * 2, 14 + grow);
+  }
+
+  function patienceColor(p) { return "hsl(" + Math.round(120 * clamp(p, 0, 1)) + " 75% 46%)"; }
+
+  function drawMeter(x, y, w, h, frac, color) {
+    ctx.fillStyle = "#232a4d";
+    rr(x, y, w, h, h / 2); ctx.fill();
+    if (frac > 0.01) { ctx.fillStyle = color; rr(x + 2, y + 2, Math.max(h - 4, (w - 4) * frac), h - 4, (h - 4) / 2); ctx.fill(); }
+  }
+
+  function drawBubble(x, y, str) {
+    ctx.font = "bold 12px " + FONT;
+    const lines = wrapLines(str, 100);
+    let w = 0;
+    lines.forEach((l) => { w = Math.max(w, ctx.measureText(l).width); });
+    w += 16;
+    const h = lines.length * 15 + 10;
+    ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "#232a4d"; ctx.lineWidth = 2; ctx.lineJoin = "round";
+    rr(x, y, w, h, 8); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(x + 1, y + h - 14); ctx.lineTo(x - 9, y + h - 5); ctx.lineTo(x + 1, y + h - 6); ctx.closePath();
+    ctx.fillStyle = "#ffffff"; ctx.fill();
+    lines.forEach((l, i) => text(l, x + 8, y + 17 + i * 15, 12, "#232a4d", "left"));
+  }
+
+  function drawFlag(t) {
+    const px = t.cx + 34, baseY = t.cy + 8, topY = t.cy - 52;
+    ctx.strokeStyle = "#6b7280"; ctx.lineWidth = 3; ctx.lineCap = "round";
+    ctx.beginPath(); ctx.moveTo(px, baseY); ctx.lineTo(px, topY); ctx.stroke();
+    dot(px, topY - 1, 3, "#f2c14e");
+    const raise = t.flag;
+    const w = lerp(15, 30, raise), h = lerp(10, 19, raise);
+    const y0 = lerp(t.cy - 4, t.cy - 47, raise);
+    const amp = RM ? 0 : 2.4 * raise;
+    ctx.fillStyle = "#e8382f";
+    ctx.beginPath();
+    ctx.moveTo(px + 1.5, y0);
+    for (let i = 1; i <= 6; i++) ctx.lineTo(px + 1.5 + (w * i) / 6, y0 + Math.sin(clock * 7 - i * 0.9) * amp * (i / 6));
+    for (let i = 6; i >= 0; i--) ctx.lineTo(px + 1.5 + (w * i) / 6, y0 + h + Math.sin(clock * 7 - i * 0.9) * amp * (i / 6));
+    ctx.closePath(); ctx.fill();
+    if (raise > 0.8) text("?", px + 1.5 + w * 0.42, y0 + h * 0.78, 13, "#ffffff", "center");
+  }
+
+  function drawSeated(s, t) {
+    let bob = 0;
+    if (!RM) {
+      if (s.state === "work") bob = Math.sin(clock * 4 + s.bob * 3) * 1.1;
+      else if (s.state === "ask") bob = Math.sin(clock * 8) * (1 + (1 - s.patience) * 2);
+      else if (s.state === "help") bob = Math.sin(clock * 6) * 1.6;
+    }
+    drawPerson(t.cx, t.cy - 12, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, view: "front", mood: moodOf(s), seated: true, bob });
+  }
+
+  function drawTable(t) {
+    const cx = t.cx, cy = t.cy, s = t.student;
+    const seated = s && isSeated(s);
+    ctx.fillStyle = "rgba(40,40,90,.16)";
+    ctx.beginPath(); ctx.ellipse(cx, cy + 44, 66, 15, 0, 0, TAU); ctx.fill();
+    if (seated) drawSeated(s, t);
+
+    tablePath(t, 9); ctx.fillStyle = "#a87a45"; ctx.fill();
+    tablePath(t, 0); ctx.fillStyle = "#e3bd86"; ctx.fill();
+    ctx.lineWidth = 2; ctx.strokeStyle = "#f0d3a6"; ctx.stroke();
+
+    const hoverable = ui.hover === t.id && s && s.state === "ask";
+    if (hoverable || tutor.target === t.id) {
+      tablePath(t, 0, 4);
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = tutor.target === t.id ? "#ffffff" : "#ffd23f";
+      if (tutor.target === t.id) ctx.setLineDash([8, 6]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
 
-    function draw() {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.fillStyle = "#2f6df6";
-      ctx.fillRect(player.x, player.y, player.size, player.size);
+    if (seated) {
+      // notebook and hands
+      ctx.fillStyle = "#ffffff"; rr(cx - 36, cy - 26, 42, 24, 3); ctx.fill();
+      ctx.fillStyle = t.subject.color; rr(cx - 36, cy - 26, 6, 24, 3); ctx.fill();
+      ctx.strokeStyle = "#c9d3e8"; ctx.lineWidth = 1.5;
+      for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(cx - 26, cy - 20 + i * 6); ctx.lineTo(cx + 1, cy - 20 + i * 6); ctx.stroke(); }
+      const wr = s.state === "work" && !RM ? Math.sin(clock * 9 + s.bob * 3) * 3 : 0;
+      dot(cx - 16, cy - 12, 4.8, s.skin);
+      dot(cx + 8 + wr, cy - 16 + wr * 0.4, 4.8, s.skin);
+      ctx.strokeStyle = "#f2c14e"; ctx.lineWidth = 2.5;
+      ctx.beginPath(); ctx.moveTo(cx + 8 + wr, cy - 16 + wr * 0.4); ctx.lineTo(cx + 15 + wr, cy - 8 + wr * 0.4); ctx.stroke();
     }
 
-    function loop() {
-      update();
-      draw();
-      requestAnimationFrame(loop);
+    // sign
+    ctx.fillStyle = "rgba(40,40,90,.22)"; rr(cx - 38, cy + 9, 76, 24, 5); ctx.fill();
+    ctx.fillStyle = "#ffffff"; rr(cx - 38, cy + 6, 76, 24, 5); ctx.fill();
+    ctx.fillStyle = t.subject.color; rr(cx - 38, cy + 6, 76, 7, 4); ctx.fill();
+    ctx.fillRect(cx - 38, cy + 9, 76, 4);
+    text(t.subject.name, cx, cy + 26, 13, "#232a4d", "center");
+    drawFlag(t);
+
+    if (!seated) return;
+    const mx = cx - 30, my = cy - 108;
+    if (s.state === "ask") {
+      const flash = s.patience < 0.25 && Math.floor(clock * 6) % 2 === 0;
+      drawMeter(mx, my, 60, 11, s.patience, flash ? "#ffffff" : patienceColor(s.patience));
+      drawBubble(cx + 30, cy - 104, s.question);
+    } else if (s.state === "help") {
+      drawMeter(mx, my, 60, 11, s.helpProg, "#4fa3ff");
+      drawBubble(cx + 30, cy - 104, "Hmm, okay...");
+    } else if (s.sayT > 0) {
+      drawBubble(cx + 30, cy - 104, s.say);
     }
-    loop();
-  </script>
+    const qi = tutor.queue.indexOf(t.id);
+    if (qi !== -1) {
+      dot(cx - 44, cy - 102, 10, "#ffffff");
+      ctx.strokeStyle = "#232a4d"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(cx - 44, cy - 102, 10, 0, TAU); ctx.stroke();
+      text(String(qi + 1), cx - 44, cy - 97, 13, "#232a4d", "center");
+    }
+  }
+
+  /* ---------- drawing: room and HUD ---------- */
+  function drawRoom() {
+    ctx.fillStyle = "#d9d7e8"; ctx.fillRect(0, 0, W, H);
+    ctx.strokeStyle = "#cdcae3"; ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let x = 0; x <= W; x += 80) { ctx.moveTo(x, 100); ctx.lineTo(x, H); }
+    for (let y = 100; y <= H; y += 80) { ctx.moveTo(0, y); ctx.lineTo(W, y); }
+    ctx.stroke();
+
+    // back wall
+    ctx.fillStyle = "#b9bfe8"; ctx.fillRect(0, 56, W, 44);
+    ctx.fillStyle = "#8e95cc"; ctx.fillRect(0, 96, W, 6);
+    ctx.fillStyle = "#ffffff"; ctx.strokeStyle = "#8e95cc"; ctx.lineWidth = 3;
+    rr(350, 62, 260, 30, 5); ctx.fill(); ctx.stroke();
+    text("Raise a flag. Get help.", 480, 83, 15, "#3d7bff", "center");
+    SUBJECTS.forEach((sub, i) => {
+      const x = i < 3 ? 60 + i * 44 : 680 + (i - 3) * 44;
+      ctx.fillStyle = sub.color; rr(x, 64, 30, 28, 3); ctx.fill();
+      ctx.fillStyle = "rgba(255,255,255,.7)"; ctx.fillRect(x + 5, 70, 20, 3); ctx.fillRect(x + 5, 77, 14, 3);
+    });
+    dot(900, 77, 15, "#ffffff");
+    ctx.strokeStyle = "#8e95cc"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(900, 77, 15, 0, TAU); ctx.stroke();
+    ctx.strokeStyle = "#232a4d"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(900, 77); ctx.lineTo(900, 68); ctx.moveTo(900, 77); ctx.lineTo(907, 80); ctx.stroke();
+
+    // door and mat on the left wall
+    ctx.fillStyle = "#5b3a29"; ctx.fillRect(0, 228, 12, 104);
+    dot(8, 282, 2.5, "#f2c14e");
+    ctx.fillStyle = "#7b86c9"; rr(12, 266, 40, 28, 6); ctx.fill();
+
+    // rug, desk, chair
+    ctx.fillStyle = "#c3c9ee"; rr(300, 478, 360, 160, 26); ctx.fill();
+    ctx.fillStyle = "#4b5280"; rr(446, 556, 68, 50, 16); ctx.fill();
+    ctx.fillStyle = "#5e3a28"; rr(DESK.x, DESK.y + 4, DESK.w, DESK.h, 8); ctx.fill();
+    ctx.fillStyle = "#8f6044"; rr(DESK.x, DESK.y, DESK.w, DESK.h - 6, 8); ctx.fill();
+    ctx.fillStyle = "#ffffff"; rr(392, 492, 38, 28, 2); ctx.fill();
+    ctx.fillStyle = "#e6e9f5"; rr(396, 490, 38, 28, 2); ctx.fill();
+    ctx.fillStyle = "#cfd4e0"; rr(448, 490, 64, 32, 4); ctx.fill();
+    dot(480, 506, 4, "#e8ebf2");
+    dot(556, 508, 8, "#ffffff");
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 3; ctx.beginPath(); ctx.arc(566, 508, 5, -1.2, 1.2); ctx.stroke();
+
+    // plant
+    ctx.fillStyle = "#c26b4a"; rr(896, 540, 34, 30, 6); ctx.fill();
+    dot(913, 528, 16, "#3aa06a"); dot(900, 536, 11, "#2f8a58"); dot(927, 535, 11, "#2f8a58");
+  }
+
+  function fmtTime(sec) {
+    sec = Math.max(0, Math.ceil(sec));
+    return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
+  }
+
+  function drawHUD() {
+    ctx.fillStyle = "#232a4d"; ctx.fillRect(0, 0, W, 56);
+    text("Score", 24, 22, 13, "#9aa3d6", "left");
+    text(String(game.score), 24, 48, 26, "#ffd23f", "left");
+    const left = CONFIG.shiftSeconds - game.time;
+    const hurry = game.state === "play" && left < 15;
+    text(fmtTime(left), 480, 34, 28, hurry && Math.floor(clock * 4) % 2 === 0 ? "#ff6b5e" : "#ffffff", "center");
+    ctx.fillStyle = "#3b4478"; rr(380, 42, 200, 6, 3); ctx.fill();
+    ctx.fillStyle = hurry ? "#ff6b5e" : "#6be39a";
+    rr(380, 42, Math.max(6, 200 * clamp(left / CONFIG.shiftSeconds, 0, 1)), 6, 3); ctx.fill();
+    text("Upset", 936, 22, 13, "#9aa3d6", "right");
+    text(String(game.upset), 936, 48, 26, "#ff8479", "right");
+    text("Helped", 850, 22, 13, "#9aa3d6", "right");
+    text(String(game.helped), 850, 48, 26, "#6be39a", "right");
+  }
+
+  function panel(x, y, w, h) {
+    ctx.fillStyle = "rgba(23,27,51,.74)"; ctx.fillRect(0, 56, W, H - 56);
+    ctx.fillStyle = "#232a4d"; ctx.strokeStyle = "#3b4478"; ctx.lineWidth = 3;
+    rr(x, y, w, h, 20); ctx.fill(); ctx.stroke();
+  }
+  function button(label, y) {
+    ctx.fillStyle = "#ffd23f"; rr(330, y, 300, 52, 14); ctx.fill();
+    text(label, 480, y + 34, 22, "#232a4d", "center");
+  }
+
+  function drawOverlay() {
+    if (game.state === "menu") {
+      panel(170, 100, 620, 440);
+      text("Tutor Rush", 480, 170, 58, "#ffd23f", "center");
+      text("Run the help desk for two minutes.", 480, 208, 20, "#c9d0f5", "center", "normal");
+      const lines = [
+        "Students sit down and work on their own.",
+        "When a flag goes up, they have a question.",
+        "Click that table (or press 1 to 6) to go help.",
+        "Patience meters drain while they wait.",
+        "Anyone who storms out costs you points."
+      ];
+      lines.forEach((l, i) => text(l, 480, 262 + i * 32, 19, "#ffffff", "center", "normal"));
+      button("Start your shift", 438);
+      text(game.best ? "Best score: " + game.best : "Or press Enter", 480, 516, 15, "#9aa3d6", "center", "normal");
+    } else if (game.state === "over") {
+      panel(170, 100, 620, 440);
+      let label = CONFIG.ratings[CONFIG.ratings.length - 1].label;
+      for (const r of CONFIG.ratings) if (game.score >= r.min) { label = r.label; break; }
+      text("Shift over", 480, 160, 28, "#c9d0f5", "center");
+      text(label, 480, 214, 44, "#ffd23f", "center");
+      text(String(game.score), 480, 290, 72, "#ffffff", "center");
+      text("points", 480, 316, 18, "#9aa3d6", "center", "normal");
+      text("Questions answered: " + game.helped, 480, 364, 20, "#6be39a", "center", "normal");
+      text("Students who left upset: " + game.upset, 480, 394, 20, "#ff8479", "center", "normal");
+      text(game.newBest ? "New best score!" : "Best score: " + game.best, 480, 430, 20, game.newBest ? "#ffd23f" : "#9aa3d6", "center", "normal");
+      button("Play again", 456);
+    } else if (game.state === "paused") {
+      panel(300, 240, 360, 150);
+      text("Paused", 480, 308, 40, "#ffd23f", "center");
+      text("Press P or Esc to resume", 480, 348, 18, "#c9d0f5", "center", "normal");
+    }
+  }
+
+  function render() {
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.save();
+    if (game.shake > 0 && !RM) ctx.translate(rand(-3, 3) * (game.shake / 0.25), rand(-3, 3) * (game.shake / 0.25));
+    drawRoom();
+    const items = [];
+    TABLES.forEach((t) => items.push({ y: t.cy, draw: () => drawTable(t) }));
+    students.forEach((s) => { if (!isSeated(s)) items.push({ y: s.y, draw: () => drawWalker(s) }); });
+    items.push({ y: tutor.y, draw: drawTutor });
+    items.sort((a, b) => a.y - b.y);
+    items.forEach((it) => it.draw());
+    floaters.forEach((f) => {
+      ctx.globalAlpha = clamp(1 - Math.pow(f.t / f.life, 3), 0, 1);
+      outlinedText(f.str, f.x, f.y, 22, f.color);
+    });
+    ctx.globalAlpha = 1;
+    ctx.restore();
+    drawHUD();
+    drawOverlay();
+  }
+
+  /* ---------- input ---------- */
+  function toGame(e) {
+    const r = canvas.getBoundingClientRect();
+    return { x: ((e.clientX - r.left) * W) / r.width, y: ((e.clientY - r.top) * H) / r.height };
+  }
+  function tableAt(x, y) {
+    for (const t of TABLES) {
+      if (x >= t.cx - 74 && x <= t.cx + 74 && y >= t.cy - 118 && y <= t.cy + 48) return t.id;
+    }
+    return -1;
+  }
+  canvas.addEventListener("pointerdown", (e) => {
+    ensureAudio();
+    if (game.state !== "play") { primary(); return; }
+    const p = toGame(e);
+    const id = tableAt(p.x, p.y);
+    if (id !== -1) requestHelp(id);
+  });
+  canvas.addEventListener("pointermove", (e) => {
+    const p = toGame(e);
+    ui.hover = game.state === "play" ? tableAt(p.x, p.y) : -1;
+    const s = ui.hover !== -1 ? TABLES[ui.hover].student : null;
+    canvas.style.cursor = s && s.state === "ask" ? "pointer" : "default";
+  });
+  canvas.addEventListener("pointerleave", () => { ui.hover = -1; canvas.style.cursor = "default"; });
+  window.addEventListener("keydown", (e) => {
+    if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const k = e.key;
+    if (k >= "1" && k <= "6") { requestHelp(Number(k) - 1); return; }
+    if (k === "p" || k === "P" || k === "Escape") { togglePause(); return; }
+    if (k === "m" || k === "M") { toggleMute(); return; }
+    if ((k === "Enter" || k === " ") && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); primary(); }
+  });
+  pauseBtn.addEventListener("click", () => { togglePause(); pauseBtn.blur(); });
+  soundBtn.addEventListener("click", () => { ensureAudio(); toggleMute(); soundBtn.blur(); });
+  document.addEventListener("visibilitychange", () => { if (document.hidden && game.state === "play") togglePause(); });
+
+  /* ---------- loop ---------- */
+  let last = 0;
+  function frame(ts) {
+    requestAnimationFrame(frame);
+    if (!last) last = ts;
+    let dt = (ts - last) / 1000;
+    last = ts;
+    if (dt > 0.05) dt = 0.05;
+    clock += dt;
+    if (game.state === "play") update(dt);
+    render();
+  }
+  updateButtons();
+  requestAnimationFrame(frame);
+})();
+</script>
 </body>
 </html>
