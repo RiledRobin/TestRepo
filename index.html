@@ -84,6 +84,16 @@
     helperSpeed: 190,           // how fast hired student tutors walk (slower than you)
     helperBreak: [3, 5],        // seconds a student tutor rests on the couch after helping
     helperBreakChance: 1,       // 1 = every time, 0.5 = half the time, 0 = never
+    maxUpset: 3,                // this many students storming out ends the shift
+    plantDrain: 55,             // seconds for a full water meter to run dry (the plant dies at empty)
+    plantHealthy: 0.25,         // the plant only grows while its water is above this
+    plantGrowSeconds: 30,       // healthy seconds needed to grow one size
+    plantMaxLevel: 4,           // how many times a plant can grow
+    waterTime: 1.6,             // seconds it takes you to water a plant
+    plantCosts: [60, 110],      // price of the second and third plant
+    replantCost: 30,            // price to replace a dead plant
+    admireAt: 0.15,             // a waiting student about to give up (patience below this) goes to admire a plant
+    admireTime: 2.2,            // seconds they spend admiring it
     helpTime: [1.4, 2.6],       // seconds it takes to answer one question
     workTime: [5, 10],          // seconds a student works before raising the flag
     patienceStart: 18,          // seconds a student will wait, early in the shift
@@ -98,7 +108,7 @@
     queueMax: 4,                // how many tables you can line up at once
     moneyMin: 2,                // cash for helping a student who was about to give up
     moneyMax: 14,               // cash for helping right after the flag goes up
-    hireCosts: [60, 140, 240],  // price of each student tutor; the list length is the team limit (max 3)
+    hireCosts: [30, 60, 100],  // price of each student tutor; the list length is the team limit (max 3)
     ratings: [
       { min: 700, label: "Tutor of the year" },
       { min: 450, label: "Great shift" },
@@ -220,7 +230,7 @@
   }
 
   /* ---------- the room ---------- */
-  const MATH = { name: "Math", color: "#f28a1e", qs: [
+  const MATH = { name: "Math", color: "#f28a1e", helper: true, qs: [
     "Is 7 lucky or just overrated?", "What if I divide by zero anyway?", "Why does x always go missing?",
     "Can I just round pi to 3?", "Is infinity bigger on Mondays?", "Is zero a number or just vibes?",
     "If I add 0 + 0, do I get more?", "Why is a triangle so dramatic?", "Who decided to call it 'negative'?",
@@ -229,7 +239,7 @@
     "Can I borrow a decimal point?", "Is FOIL a baking method?", "Does pi ever finish its sentence?",
     "If x = y, who's winning?", "Can a graph be mad at me?", "Is a right angle never wrong?",
     "How big is a googol in pizzas?", "Why is 'parallel' so jealous?", "Is a matrix a movie or a math?"] };
-  const CHEM = { name: "Chemistry", color: "#8a63f2", qs: [
+  const CHEM = { name: "Chemistry", color: "#8a63f2", helper: true, qs: [
     "Can I turn lead into gold?", "Is water just wet hydrogen?", "Is the periodic table a menu?",
     "Do atoms get lonely?", "What if I mix every liquid?", "Is a mole an animal or 6.02e23?",
     "Why is helium so squeaky?", "Is salt just angry sodium?", "Do electrons ever take a nap?",
@@ -260,6 +270,12 @@
     "If it rains 30%, is it 30% wet?", "Does a histogram ever rest?", "Is a z-score a grade for weirdness?"] };
   // table order, top-left to bottom-right: 3 Math, 3 Chemistry, 1 Biology, 1 Physics, 1 Stats
   const SUBJECTS = [MATH, CHEM, BIO, PHYS, MATH, CHEM, STATS, CHEM, MATH];
+
+  // what students say when they admire the plant
+  const ADMIRE_LINES = [
+    "Ooh, such a pretty plant!", "Oh, hello little guy.", "This plant gets me.",
+    "Photosynthesis is so calming.", "Ahh. Fresh leaves.", "Best employee here, honestly."
+  ];
 
   // what the student tutors mutter when they flop onto the couch
   const BREAK_LINES = [
@@ -296,9 +312,19 @@
   const LOW_Y = 580;       // walkway in front of the third row
   const HOME = { x: 480, y: 724 };
   const DESK = { x: 370, y: 612, w: 220, h: 44 };
+  const DESK_AREA = { x: 340, y: 600, w: 300, h: 160 };   // click here to send yourself back to the desk
   const HELPER_SPOTS = [{ x: 769, y: 740 }, { x: 825, y: 740 }, { x: 881, y: 740 }];   // where they stand by the couch
   const HELPER_SEATS = [{ x: 769, y: 676 }, { x: 825, y: 676 }, { x: 881, y: 676 }];   // the couch cushions
   const MAX_HELPERS = Math.min(CONFIG.hireCosts.length, HELPER_SPOTS.length);
+
+  // Plants live in the bottom-left corner: the first one, then one added to its right, then one on top.
+  const PLANT_LANE_X = 104;     // the walkway beside them
+  const PLANTS = [
+    { slot: 0, x: 46, y: 735 },
+    { slot: 1, x: 170, y: 735 },
+    { slot: 2, x: 46, y: 605 }
+  ].map((p) => Object.assign(p, { unlocked: false, alive: true, water: 1, level: 0, growT: 0 }));
+  const PLANT_NODE = ["pb", "pb", "pa"];   // where you stand to water each one
 
   const TABLES = [];
   ROWS.forEach((cy, r) => COLS.forEach((cx, c) => {
@@ -334,6 +360,7 @@
     link("s" + (c + 6), "l" + c);
   }
   addNode("door", -40, AISLE_Y); link("door", "a0");
+  addNode("pa", PLANT_LANE_X, 605); addNode("pb", PLANT_LANE_X, 735); link("l0", "pa"); link("pa", "pb");
   addNode("hub", 664, HELPER_SPOTS[0].y); link("l2", "hub");
   HELPER_SPOTS.forEach((p, i) => { addNode("h" + i, p.x, p.y); link(i === 0 ? "hub" : "h" + (i - 1), "h" + i); });
   HELPER_SEATS.forEach((p, i) => { addNode("q" + i, p.x, p.y); link("h" + i, "q" + i); });
@@ -401,7 +428,7 @@
   }
 
   /* ---------- game state ---------- */
-  const game = { state: "menu", time: 0, score: 0, cash: 0, earned: 0, helped: 0, upset: 0, spawnT: 0, best: loadBest(), newBest: false, overAt: 0, shake: 0 };
+  const game = { state: "menu", time: 0, score: 0, cash: 0, earned: 0, helped: 0, upset: 0, spawnT: 0, best: loadBest(), newBest: false, overAt: 0, shake: 0, failT: 2.4, endReason: "" };
   const students = [];
   const helpers = [];
   const floaters = [];
@@ -414,11 +441,12 @@
 
   function resetGame() {
     game.time = 0; game.score = 0; game.cash = 0; game.earned = 0; game.helped = 0; game.upset = 0;
-    game.spawnT = 0.5; game.shake = 0; game.newBest = false;
+    game.spawnT = 0.5; game.shake = 0; game.newBest = false; game.failT = 2.4; game.endReason = "";
     students.length = 0;
     helpers.length = 0;
     floaters.length = 0;
     TABLES.forEach((t) => { t.student = null; t.flag = 0; });
+    PLANTS.forEach((p, i) => Object.assign(p, { unlocked: i === 0, alive: true, water: 1, level: 0, growT: 0 }));
     Object.assign(tutor, { x: HOME.x, y: HOME.y, node: "home", path: [], target: null, state: "desk", queue: [], helpT: 0, walk: 0, dirY: 0 });
   }
 
@@ -474,6 +502,7 @@
     s.question = subj.qs[i];
     s.patDur = lerp(CONFIG.patienceStart, CONFIG.patienceEnd, progress()) * rand(0.85, 1.15);
     s.patience = 1;
+    s.admired = false;
     s.state = "ask";
     sfx.flag();
   }
@@ -488,6 +517,24 @@
     s.speed = mood === "angry" ? 230 : 160;
     const lx = t.cx - 96;
     s.path = [{ x: lx, y: s.y }, { x: lx, y: AISLE_Y }, { x: -50, y: AISLE_Y }];
+  }
+
+  function nearestLivePlant(s) {
+    let best = null, bd = Infinity;
+    PLANTS.forEach((p) => {
+      if (!p.unlocked || !p.alive) return;
+      const d = Math.hypot(p.x - s.x, p.y - s.y);
+      if (d < bd) { bd = d; best = p; }
+    });
+    return best;
+  }
+  function startVisit(s) {
+    const t = s.table, pl = nearestLivePlant(s), lx = laneX(t);
+    s.admired = true;
+    s.plant = pl;
+    s.speed = 175;
+    s.path = [{ x: lx, y: s.y }, { x: lx, y: LOW_Y }, { x: PLANT_LANE_X, y: LOW_Y }, { x: PLANT_LANE_X, y: pl.y }];
+    s.state = "visit";
   }
 
   function storm(s) {
@@ -518,7 +565,35 @@
         break;
       case "ask":
         s.patience -= dt / s.patDur;
-        if (s.patience <= 0) { s.patience = 0; storm(s); }
+        // about to give up: if there is a living plant (and nobody is already coming to help), go admire it
+        if (s.patience > 0 && s.patience <= CONFIG.admireAt && !s.admired && nearestLivePlant(s) && !isClaimed(s.tid)) startVisit(s);
+        else if (s.patience <= 0) { s.patience = 0; storm(s); }
+        break;
+      case "visit":
+        if (walkPath(s, s.speed * dt)) {
+          s.state = "admire";
+          s.moodT = 99;
+          if (s.plant.unlocked && s.plant.alive) {
+            s.timer = CONFIG.admireTime; s.mood = "happy"; s.noBoost = false;
+            s.say = pick(ADMIRE_LINES); s.sayT = CONFIG.admireTime;
+          } else {
+            s.timer = 1.6; s.mood = "upset"; s.noBoost = true;
+            s.say = "Ew. It's dead."; s.sayT = 1.6;
+          }
+        }
+        break;
+      case "admire":
+        s.timer -= dt;
+        if (s.timer <= 0) {
+          if (!s.noBoost) s.patience = 1;     // all their patience is back
+          const t = s.table, lx = laneX(t);
+          s.mood = "neutral"; s.moodT = 0;
+          s.path = [{ x: PLANT_LANE_X, y: LOW_Y }, { x: lx, y: LOW_Y }, { x: lx, y: t.cy - 12 }, { x: t.cx, y: t.cy - 12 }];
+          s.state = "back";
+        }
+        break;
+      case "back":
+        if (walkPath(s, s.speed * dt)) { s.state = "ask"; sfx.flag(); }
         break;
       case "fume":
         s.fumeT -= dt;
@@ -580,16 +655,20 @@
   }
 
   /* ---------- you (the tutor at the desk) ---------- */
+  // targets are table ids 0 to 8, and plant ids 9 to 11
+  const isPlantId = (id) => id >= 9;
+  const plantOf = (id) => PLANTS[id - 9];
+  const plantUsable = (p) => p.unlocked && p.alive;
+  const goalNode = (id) => (isPlantId(id) ? PLANT_NODE[id - 9] : "s" + id);
+
   function planNext() {
     while (tutor.queue.length) {
       const id = tutor.queue.shift();
-      const s = TABLES[id].student;
-      if (s && s.state === "ask") {
-        tutor.target = id;
-        tutor.path = pathFor(tutor, "s" + id);
-        tutor.state = "walk";
-        return true;
-      }
+      if (isPlantId(id) && !plantUsable(plantOf(id))) continue;
+      tutor.target = id;
+      tutor.path = pathFor(tutor, goalNode(id));
+      tutor.state = "walk";
+      return true;
     }
     return false;
   }
@@ -614,11 +693,30 @@
     tutor.target = null;
     dispatch();
   }
+  function startWater() {
+    tutor.state = "water";
+    tutor.helpT = 0;
+    tutor.helpDur = CONFIG.waterTime;
+    tutor.waterFrom = plantOf(tutor.target).water;
+  }
+  function finishWater() {
+    const p = plantOf(tutor.target);
+    if (p.alive) { p.water = 1; floater("Watered!", p.x, p.y - 100, "#7ec8ff"); sfx.help(); }
+    tutor.target = null;
+    dispatch();
+  }
+  function goHome() {
+    tutor.queue.length = 0;
+    if (tutor.state === "help" || tutor.state === "water" || tutor.state === "desk") return;
+    tutor.target = null;
+    tutor.path = pathFor(tutor, "home");
+    tutor.state = "walk";
+  }
   function updateTutor(dt) {
-    tutor.queue = tutor.queue.filter((id) => { const s = TABLES[id].student; return s && s.state === "ask"; });
-    if (tutor.state === "walk" && tutor.target !== null) {
-      const s = TABLES[tutor.target].student;
-      if (!(s && s.state === "ask")) { tutor.target = null; dispatch(); }
+    tutor.queue = tutor.queue.filter((id) => !isPlantId(id) || plantUsable(plantOf(id)));
+    if (tutor.state === "walk" && tutor.target !== null && isPlantId(tutor.target) && !plantUsable(plantOf(tutor.target))) {
+      tutor.target = null;
+      dispatch();
     }
     if (tutor.state === "desk") {
       if (tutor.queue.length) planNext();
@@ -626,21 +724,35 @@
       if (tutor.target === null && tutor.queue.length) planNext();
       stepAlong(tutor, CONFIG.tutorSpeed, dt);
       if (tutor.path.length === 0) {
-        if (tutor.target !== null) startHelp(tutor.target);
-        else { tutor.state = "desk"; tutor.x = HOME.x; tutor.y = HOME.y; tutor.node = "home"; }
+        if (tutor.target === null) { tutor.state = "desk"; tutor.x = HOME.x; tutor.y = HOME.y; tutor.node = "home"; }
+        else if (isPlantId(tutor.target)) startWater();
+        else {
+          const s = TABLES[tutor.target].student;
+          if (s && s.state === "ask") startHelp(tutor.target);
+          else tutor.state = "post";    // wait at the table: you jump in the moment they raise the flag
+        }
       }
+    } else if (tutor.state === "post") {
+      const s = TABLES[tutor.target].student;
+      if (s && s.state === "ask") startHelp(tutor.target);
+      else if (tutor.queue.length) planNext();
     } else if (tutor.state === "help") {
       tutor.helpT += dt;
       const s = TABLES[tutor.target].student;
       s.helpProg = clamp(tutor.helpT / tutor.helpDur, 0, 1);
       if (tutor.helpT >= tutor.helpDur) finishHelp();
+    } else if (tutor.state === "water") {
+      tutor.helpT += dt;
+      const p = plantOf(tutor.target);
+      if (p.alive) p.water = Math.max(p.water, lerp(tutor.waterFrom, 1, clamp(tutor.helpT / tutor.helpDur, 0, 1)));
+      if (tutor.helpT >= tutor.helpDur) finishWater();
     }
   }
 
-  function requestHelp(id) {
+  // send yourself to a table (even one with nobody asking) or to a plant
+  function requestGo(id) {
     if (game.state !== "play") return;
-    const s = TABLES[id].student;
-    if (!s || s.state !== "ask") return;
+    if (isPlantId(id) && !plantUsable(plantOf(id))) return;
     if (tutor.target === id || tutor.queue.indexOf(id) !== -1) return;
     if (tutor.queue.length >= CONFIG.queueMax) return;
     tutor.queue.push(id);
@@ -671,7 +783,7 @@
     let best = null, bestLeft = Infinity;
     TABLES.forEach((t) => {
       const s = t.student;
-      if (!s || s.state !== "ask" || isClaimed(t.id)) return;
+      if (!t.subject.helper || !s || s.state !== "ask" || isClaimed(t.id)) return;
       const left = s.patience * s.patDur;
       if (left - travelTime(h, "s" + t.id, CONFIG.helperSpeed) < 0.4) return;
       if (left < bestLeft) { bestLeft = left; best = t.id; }
@@ -744,10 +856,60 @@
     }
   }
 
+  /* ---------- plants ---------- */
+  function updatePlants(dt) {
+    PLANTS.forEach((p) => {
+      if (!p.unlocked || !p.alive) return;
+      p.water -= dt / CONFIG.plantDrain;
+      if (p.water <= 0) {
+        p.water = 0;
+        p.alive = false;
+        floater("The plant died!", p.x + 30, p.y - 100, "#e0b97a");
+        sfx.upset();
+        return;
+      }
+      if (p.water >= CONFIG.plantHealthy && p.level < CONFIG.plantMaxLevel) {
+        p.growT += dt;
+        if (p.growT >= CONFIG.plantGrowSeconds) {
+          p.growT = 0;
+          p.level++;
+          floater("The plant grew!", p.x + 30, p.y - 100, "#6be39a");
+          sfx.cash();
+        }
+      }
+    });
+  }
+  function waterThirstiest() {
+    let best = null;
+    PLANTS.forEach((p) => { if (plantUsable(p) && (best === null || p.water < best.water)) best = p; });
+    if (best) requestGo(9 + best.slot);
+  }
+  function plantOffer() {
+    if (PLANTS.some((p) => p.unlocked && !p.alive)) return { kind: "replant", cost: CONFIG.replantCost };
+    const n = PLANTS.filter((p) => p.unlocked).length;
+    if (n < PLANTS.length) return { kind: "buy", cost: CONFIG.plantCosts[n - 1] };
+    return null;
+  }
+  function buyPlant() {
+    if (game.state !== "play") return;
+    const o = plantOffer();
+    if (!o || game.cash < o.cost) return;
+    game.cash -= o.cost;
+    const p = o.kind === "replant" ? PLANTS.find((q) => q.unlocked && !q.alive) : PLANTS.find((q) => !q.unlocked);
+    Object.assign(p, { unlocked: true, alive: true, water: 1, level: 0, growT: 0 });
+    floater("-$" + o.cost, 330, 112, "#ff9d8f");
+    floater(o.kind === "replant" ? "Replanted!" : "New plant!", p.x + 30, p.y - 100, "#6be39a");
+    sfx.hire();
+  }
+
   /* ---------- main update ---------- */
   function update(dt) {
     game.time += dt;
     if (game.time >= CONFIG.shiftSeconds) { endShift(); return; }
+    if (game.upset >= CONFIG.maxUpset) {
+      game.failT -= dt;     // a moment to watch the last student storm out
+      if (game.failT <= 0) { endShift("Three students stormed out."); return; }
+    }
 
     game.spawnT -= dt;
     if (game.spawnT <= 0) {
@@ -762,6 +924,7 @@
     for (let i = students.length - 1; i >= 0; i--) if (students[i].done) students.splice(i, 1);
     updateTutor(dt);
     helpers.forEach((h) => updateHelper(h, dt));
+    updatePlants(dt);
 
     TABLES.forEach((t) => {
       const want = t.student && (t.student.state === "ask" || t.student.state === "help") ? 1 : 0;
@@ -783,7 +946,8 @@
     sfx.start();
     updateButtons();
   }
-  function endShift() {
+  function endShift(reason) {
+    game.endReason = reason || "Time's up!";
     game.state = "over";
     game.overAt = performance.now();
     if (game.score > game.best) { game.best = game.score; game.newBest = true; saveBest(game.best); }
@@ -969,6 +1133,8 @@
   function moodOf(s) {
     if (s.state === "leave") return s.mood;
     if (s.state === "fume") return "angry";
+    if (s.state === "visit") return "worried";
+    if (s.state === "admire") return s.mood === "upset" ? "upset" : "happy";
     if (s.mood === "happy" && s.moodT > 0) return "happy";
     if (s.state === "ask") return s.patience > 0.6 ? "neutral" : s.patience > 0.3 ? "worried" : "upset";
     return "neutral";
@@ -986,10 +1152,10 @@
   function drawTutor() {
     const seated = tutor.state === "desk";
     const view = seated || (tutor.state === "walk" && tutor.dirY < -0.2) ? "back" : "front";
-    const bob = tutor.state === "help" && !RM ? Math.sin(clock * 9) * 1.2 : 0;
+    const bob = (tutor.state === "help" || tutor.state === "water") && !RM ? Math.sin(clock * 9) * 1.2 : 0;
     drawPerson(tutor.x, tutor.y, {
       skin: "#c98e64", hair: "#35200f", hairStyle: 2, shirt: "#1fa38a",
-      view, mood: tutor.state === "help" ? "happy" : "neutral",
+      view, mood: tutor.state === "help" || tutor.state === "water" ? "happy" : "neutral",
       walk: tutor.walk, seated, glasses: true, lanyard: true, bob
     });
   }
@@ -1057,6 +1223,46 @@
     lines.forEach((l, i) => text(l, bx + 9, by + 17 + i * 16, 13, ink, "left"));
   }
 
+  function drawPlant(p) {
+    const k = 1 + 0.12 * p.level;
+    const x = p.x, y = p.y;
+    const dead = !p.alive;
+    const thirsty = p.water < 0.3;
+    ctx.fillStyle = "rgba(40,40,90,.16)";
+    ctx.beginPath(); ctx.ellipse(x, y + 3, 26 * k, 7 * k, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = dead ? "#a5694f" : "#c26b4a";
+    rr(x - 17 * k, y - 28 * k, 34 * k, 28 * k, 6 * k); ctx.fill();
+    ctx.fillStyle = "#5a3d2b";
+    rr(x - 15 * k, y - 31 * k, 30 * k, 7 * k, 3.5 * k); ctx.fill();
+    const g1 = dead ? "#8b7a45" : thirsty ? "#9bb04a" : "#3aa06a";
+    const g2 = dead ? "#74653a" : thirsty ? "#85993d" : "#2f8a58";
+    const d = dead ? 12 * k : thirsty ? 5 * k : 0;
+    dot(x, y - 46 * k + d, 15 * k, g1);
+    dot(x - 11 * k, y - 38 * k + d, 11 * k, g2);
+    dot(x + 11 * k, y - 38 * k + d, 11 * k, g2);
+    if (p.level >= 1) dot(x, y - 58 * k + d * 0.7, 10 * k, g1);
+    if (p.level >= 2) { dot(x - 14 * k, y - 52 * k + d * 0.7, 8 * k, g2); dot(x + 14 * k, y - 52 * k + d * 0.7, 8 * k, g2); }
+    if (p.level >= 3 && !dead) { dot(x - 5 * k, y - 68 * k, 4 * k, "#ff8ad8"); dot(x + 7 * k, y - 64 * k, 4 * k, "#ffd23f"); }
+    if (p.level >= 4 && !dead) { dot(x + 14 * k, y - 56 * k, 3.5 * k, "#ff8ad8"); dot(x - 13 * k, y - 60 * k, 3.5 * k, "#ffffff"); }
+    if (dead) text("RIP", x, y - 10 * k, 10 * k, "#fff3df", "center");
+    if (tutor.state === "water" && tutor.target === 9 + p.slot) {
+      for (let i = 0; i < 4; i++) dot(x - 12 + i * 8, y - 70 * k + ((clock * 70 + i * 17) % 40), 2.4, "#7ec8ff");
+    }
+    if (!dead) {
+      // water meter, like the students' patience meters
+      const my = y - 80 * k - 6;
+      const flash = p.water < 0.2 && Math.floor(clock * 6) % 2 === 0;
+      drawMeter(x - 28, my, 56, 11, p.water, flash ? "#ffffff" : "#4fa3ff");
+      ctx.fillStyle = "#4fa3ff";
+      ctx.beginPath(); ctx.moveTo(x - 38, my); ctx.quadraticCurveTo(x - 43, my + 6, x - 38, my + 10); ctx.quadraticCurveTo(x - 33, my + 6, x - 38, my); ctx.fill();
+      if (p.level < CONFIG.plantMaxLevel) {
+        // growth progress
+        ctx.fillStyle = "#b6b9d6"; rr(x - 18, y + 9, 36, 4, 2); ctx.fill();
+        if (p.growT > 0.3) { ctx.fillStyle = "#6be39a"; rr(x - 18, y + 9, Math.max(4, 36 * p.growT / CONFIG.plantGrowSeconds), 4, 2); ctx.fill(); }
+      }
+    }
+  }
+
   // the front cushions, drawn after anyone sitting so they sink into the couch
   function drawCouchFront() {
     ctx.fillStyle = "#9b80cc"; rr(741, 664, 168, 38, 8); ctx.fill();
@@ -1093,6 +1299,15 @@
     drawPerson(t.cx, t.cy - 12, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, look: s.look, view: "front", mood: moodOf(s), seated: true, bob });
   }
 
+  function drawQueueBadge(t) {
+    const qi = tutor.queue.indexOf(t.id);
+    if (qi === -1) return;
+    const ord = ["1st", "2nd", "3rd", "4th"][qi] || String(qi + 1);
+    ctx.fillStyle = "#ffffff"; rr(t.cx - 68, t.cy - 109, 32, 14, 7); ctx.fill();
+    ctx.strokeStyle = "#232a4d"; ctx.lineWidth = 2; rr(t.cx - 68, t.cy - 109, 32, 14, 7); ctx.stroke();
+    text(ord, t.cx - 52, t.cy - 98, 11, "#232a4d", "center");
+  }
+
   function drawTable(t) {
     const cx = t.cx, cy = t.cy, s = t.student;
     const seated = s && isSeated(s);
@@ -1104,7 +1319,7 @@
     tablePath(t, 0); ctx.fillStyle = "#e3bd86"; ctx.fill();
     ctx.lineWidth = 2; ctx.strokeStyle = "#f0d3a6"; ctx.stroke();
 
-    const hoverable = ui.hover === t.id && s && s.state === "ask";
+    const hoverable = ui.hover === t.id;
     const tutorGoing = tutor.target === t.id;
     const helperGoing = helpers.some((h) => h.target === t.id);
     if (hoverable || tutorGoing || helperGoing) {
@@ -1136,6 +1351,12 @@
     ctx.fillStyle = t.subject.color; rr(cx - 38, cy + 6, 76, 7, 4); ctx.fill();
     ctx.fillRect(cx - 38, cy + 9, 76, 4);
     text(t.subject.name, cx, cy + 26, 13, "#232a4d", "center");
+    if (t.subject.helper && helpers.length) {
+      // student tutors can handle this table
+      dot(cx + 38, cy + 30, 7, "#2d4fd6");
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.5; ctx.beginPath(); ctx.arc(cx + 38, cy + 30, 7, 0, TAU); ctx.stroke();
+      text("ST", cx + 38, cy + 33, 8, "#ffffff", "center");
+    }
 
     // the number to press for this table (turns gold while its flag is up)
     const asking = s && s.state === "ask";
@@ -1146,6 +1367,7 @@
 
     drawFlag(t);
 
+    drawQueueBadge(t);
     if (!seated) return;
     const mx = cx - 30, my = cy - 108;
     if (s.state === "ask") {
@@ -1157,13 +1379,6 @@
       drawBubble(cx + 30, cy - 104, "Hmm, okay...");
     } else if (s.sayT > 0) {
       drawBubble(cx + 30, cy - 104, s.say);
-    }
-    const qi = tutor.queue.indexOf(t.id);
-    if (qi !== -1) {
-      const ord = ["1st", "2nd", "3rd", "4th"][qi] || String(qi + 1);
-      ctx.fillStyle = "#ffffff"; rr(cx - 68, cy - 109, 32, 14, 7); ctx.fill();
-      ctx.strokeStyle = "#232a4d"; ctx.lineWidth = 2; rr(cx - 68, cy - 109, 32, 14, 7); ctx.stroke();
-      text(ord, cx - 52, cy - 98, 11, "#232a4d", "center");
     }
   }
 
@@ -1254,14 +1469,19 @@
 
   function drawHUD() {
     ctx.fillStyle = "#232a4d"; ctx.fillRect(0, 0, W, 56);
-    text("Score", 24, 22, 13, "#9aa3d6", "left");
-    text(String(game.score), 24, 48, 26, "#ffffff", "left");
-    text("Cash", 140, 22, 13, "#9aa3d6", "left");
-    text("$" + game.cash, 140, 48, 26, "#ffd23f", "left");
+    const label = (str, x) => text(str, x, 20, 12, "#9aa3d6", "left");
+    label("Score", 20);
+    text(String(game.score), 20, 47, 24, "#ffffff", "left");
+    label("Cash", 96);
+    text("$" + game.cash, 96, 47, 24, "#ffd23f", "left");
     const hc = hireCost();
     const canHire = hc !== null && game.cash >= hc && game.state === "play";
-    text("Hire tutor (H)", 250, 22, 13, "#9aa3d6", "left");
-    text(hc === null ? "Team full" : "$" + hc, 250, 48, hc === null ? 20 : 26, canHire ? "#6be39a" : "#6b73a8", "left");
+    label("Hire tutor (H)", 172);
+    text(hc === null ? "Team full" : "$" + hc, 172, 47, hc === null ? 18 : 24, canHire ? "#6be39a" : "#6b73a8", "left");
+    const po = plantOffer();
+    const canPlant = po !== null && game.cash >= po.cost && game.state === "play";
+    label(po && po.kind === "replant" ? "Replant (B)" : "Buy plant (B)", 280);
+    text(po === null ? "Plants full" : "$" + po.cost, 280, 47, po === null ? 18 : 24, canPlant ? "#6be39a" : "#6b73a8", "left");
     const left = CONFIG.shiftSeconds - game.time;
     const hurry = game.state === "play" && left < 15;
     text(fmtTime(left), 480, 34, 28, hurry && Math.floor(clock * 4) % 2 === 0 ? "#ff6b5e" : "#ffffff", "center");
@@ -1269,7 +1489,7 @@
     ctx.fillStyle = hurry ? "#ff6b5e" : "#6be39a";
     rr(380, 42, Math.max(6, 200 * clamp(left / CONFIG.shiftSeconds, 0, 1)), 6, 3); ctx.fill();
     text("Upset", 936, 22, 13, "#9aa3d6", "right");
-    text(String(game.upset), 936, 48, 26, "#ff8479", "right");
+    text(game.upset + "/" + CONFIG.maxUpset, 936, 48, 26, game.upset >= CONFIG.maxUpset - 1 ? "#ff6b5e" : "#ff8479", "right");
     text("Helped", 850, 22, 13, "#9aa3d6", "right");
     text(String(game.helped), 850, 48, 26, "#6be39a", "right");
     drawHudButtons();
@@ -1293,26 +1513,28 @@
     ctx.save();
     ctx.translate(0, OY);
     if (game.state === "menu") {
-      panel(170, 90, 620, 460);
-      text("Tutor Rush", 480, 160, 58, "#ffd23f", "center");
-      text("Run the help desk for three minutes.", 480, 198, 20, "#c9d0f5", "center", "normal");
+      panel(170, 70, 620, 520);
+      text("Tutor Rush", 480, 140, 58, "#ffd23f", "center");
+      text("Run the help desk for three minutes.", 480, 176, 20, "#c9d0f5", "center", "normal");
       const lines = [
         "Students sit down and work on their own.",
         "When a flag goes up, they have a question.",
-        "Click that table, or press the number on it.",
+        "Click a table or press its number to go there.",
         "Faster help earns more points and more cash.",
-        "Press H to hire a student tutor (they walk slowly).",
-        "Anyone who storms out costs you points.",
-        "P pauses and M mutes, or use the buttons up top."
+        "Press H to hire student tutors (math and chemistry only).",
+        "Water the plant (W, or click it) or it dies.",
+        "A living plant calms students who are about to give up.",
+        "Press B to buy plants. P pauses, M mutes.",
+        "Three angry exits end your shift."
       ];
-      lines.forEach((l, i) => text(l, 480, 248 + i * 31, 19, "#ffffff", "center", "normal"));
-      button("Start your shift", 454);
-      text(game.best ? "Best score: " + game.best : "Or press Enter", 480, 530, 15, "#9aa3d6", "center", "normal");
+      lines.forEach((l, i) => text(l, 480, 226 + i * 28, 18, "#ffffff", "center", "normal"));
+      button("Start your shift", 482);
+      text(game.best ? "Best score: " + game.best : "Or press Enter", 480, 562, 15, "#9aa3d6", "center", "normal");
     } else if (game.state === "over") {
       panel(170, 90, 620, 460);
       let label = CONFIG.ratings[CONFIG.ratings.length - 1].label;
       for (const r of CONFIG.ratings) if (game.score >= r.min) { label = r.label; break; }
-      text("Shift over", 480, 150, 28, "#c9d0f5", "center");
+      text(game.endReason || "Shift over", 480, 150, 28, "#c9d0f5", "center");
       text(label, 480, 204, 44, "#ffd23f", "center");
       text(String(game.score), 480, 280, 72, "#ffffff", "center");
       text("points", 480, 306, 18, "#9aa3d6", "center", "normal");
@@ -1339,11 +1561,13 @@
     students.forEach((s) => { if (!isSeated(s)) items.push({ y: s.y, draw: () => drawWalker(s) }); });
     helpers.forEach((h) => items.push({ y: h.y, draw: () => drawHelper(h) }));
     items.push({ y: 677.5, draw: drawCouchFront });
+    PLANTS.forEach((p) => { if (p.unlocked) items.push({ y: p.y, draw: () => drawPlant(p) }); });
     items.push({ y: tutor.y, draw: drawTutor });
     items.sort((a, b) => a.y - b.y);
     items.forEach((it) => it.draw());
     students.forEach((s) => {
       if (s.state === "fume" && s.table) drawShout(s.table.cx, s.table.cy - 92, s.say);
+      if (s.state === "admire" && s.sayT > 0) drawShout(s.x, s.y - 80, s.say, true);
     });
     helpers.forEach((h) => { if (h.sayT > 0) drawShout(h.x, h.y - 74, h.say, true); });
     floaters.forEach((f) => {
@@ -1372,6 +1596,14 @@
     }
     return best;
   }
+  function plantAt(x, y) {
+    for (const pl of PLANTS) {
+      if (!pl.unlocked) continue;
+      const k = 1 + 0.12 * pl.level;
+      if (Math.abs(x - pl.x) <= 40 * k && y >= pl.y - 95 * k && y <= pl.y + 8) return 9 + pl.slot;
+    }
+    return -1;
+  }
   const inBtn = (p, b) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
   canvas.addEventListener("pointerdown", (e) => {
     ensureAudio();
@@ -1380,14 +1612,18 @@
     if (inBtn(p, BTN_PAUSE)) { if (game.state === "play" || game.state === "paused") togglePause(); return; }
     if (game.state !== "play") { primary(); return; }
     const id = tableAt(p.x, p.y);
-    if (id !== -1) requestHelp(id);
+    if (id !== -1) { requestGo(id); return; }
+    const pid = plantAt(p.x, p.y);
+    if (pid !== -1) { requestGo(pid); return; }
+    if (inBtn(p, DESK_AREA)) goHome();
   });
   canvas.addEventListener("pointermove", (e) => {
     const p = toGame(e);
     ui.hover = game.state === "play" ? tableAt(p.x, p.y) : -1;
-    const s = ui.hover !== -1 ? TABLES[ui.hover].student : null;
+    const overPlant = game.state === "play" && plantAt(p.x, p.y) !== -1;
+    const overDesk = game.state === "play" && inBtn(p, DESK_AREA);
     const overBtn = inBtn(p, BTN_SOUND) || (inBtn(p, BTN_PAUSE) && (game.state === "play" || game.state === "paused"));
-    canvas.style.cursor = (s && s.state === "ask") || overBtn ? "pointer" : "default";
+    canvas.style.cursor = ui.hover !== -1 || overPlant || overDesk || overBtn ? "pointer" : "default";
   });
   canvas.addEventListener("pointerleave", () => { ui.hover = -1; canvas.style.cursor = "default"; });
   window.addEventListener("keydown", (e) => {
@@ -1399,12 +1635,15 @@
     else if (k && k.length === 1 && k >= "1" && k <= "9") d = Number(k);
     if (d) {
       const t = tableByNum(d);
-      if (t) requestHelp(t.id);
+      if (t) requestGo(t.id);
       return;
     }
     if (k === "p" || k === "P" || k === "Escape") { togglePause(); return; }
     if (k === "m" || k === "M") { toggleMute(); return; }
     if (k === "h" || k === "H") { hire(); return; }
+    if (k === "w" || k === "W") { waterThirstiest(); return; }
+    if (k === "b" || k === "B") { buyPlant(); return; }
+    if (k === "0" || (e.code && /^(Digit|Numpad)0$/.test(e.code))) { goHome(); return; }
     if ((k === "Enter" || k === " ") && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); primary(); }
   });
   document.addEventListener("visibilitychange", () => { if (document.hidden && game.state === "play") togglePause(); });
