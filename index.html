@@ -27,7 +27,7 @@
       font-family: "Trebuchet MS", ui-rounded, system-ui, sans-serif;
     }
     /* keeps the whole game, buttons included, on screen on shorter displays */
-    #wrap { width: min(960px, 100%, calc((100vh - 130px) * 1.2533)); }
+    #wrap { width: min(960px, 100%, calc((100vh - 40px) * 1.2533)); }
     canvas {
       display: block;
       width: 100%;
@@ -68,14 +68,6 @@
 <body>
   <main id="wrap">
     <canvas id="game" width="960" height="766" aria-label="Tutor Rush, a game about running the help desk at a tutoring center"></canvas>
-    <div class="bar">
-      <span class="hint">Click a table with a raised flag, or press the number on it (numpad layout: 7 8 9 / 4 5 6 / 1 2 3). H hires a student tutor. P pauses, M mutes.</span>
-      <span class="btns">
-        <button id="hireBtn" type="button" disabled>Hire student tutor</button>
-        <button id="pauseBtn" type="button" disabled>Pause</button>
-        <button id="soundBtn" type="button">Sound: on</button>
-      </span>
-    </div>
   </main>
 
 <script>
@@ -90,6 +82,8 @@
     shiftSeconds: 180,          // length of a shift
     tutorSpeed: 340,            // how fast you walk (pixels per second)
     helperSpeed: 190,           // how fast hired student tutors walk (slower than you)
+    helperBreak: [3, 5],        // seconds a student tutor rests on the couch after helping
+    helperBreakChance: 1,       // 1 = every time, 0.5 = half the time, 0 = never
     helpTime: [1.4, 2.6],       // seconds it takes to answer one question
     workTime: [5, 10],          // seconds a student works before raising the flag
     patienceStart: 18,          // seconds a student will wait, early in the shift
@@ -119,9 +113,6 @@
 
   const canvas = document.getElementById("game");
   const ctx = canvas.getContext("2d");
-  const pauseBtn = document.getElementById("pauseBtn");
-  const soundBtn = document.getElementById("soundBtn");
-  const hireBtn = document.getElementById("hireBtn");
   const RM = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   canvas.width = Math.round(W * dpr);
@@ -229,23 +220,54 @@
   }
 
   /* ---------- the room ---------- */
-  const MATH = { name: "Math", color: "#3d7bff", qs: [
+  const MATH = { name: "Math", color: "#f28a1e", qs: [
     "Is 7 lucky or just overrated?", "What if I divide by zero anyway?", "Why does x always go missing?",
-    "Can I just round pi to 3?", "Is infinity bigger on Mondays?", "Is zero a number or just vibes?"] };
-  const CHEM = { name: "Chemistry", color: "#e8573f", qs: [
+    "Can I just round pi to 3?", "Is infinity bigger on Mondays?", "Is zero a number or just vibes?",
+    "If I add 0 + 0, do I get more?", "Why is a triangle so dramatic?", "Who decided to call it 'negative'?",
+    "Is 1 a lonely number?", "Can I carry the 1 to my car?", "Does a parabola ever get tired?",
+    "Is a fraction half a number?", "What's the square root of Tuesday?", "Are prime numbers just picky?",
+    "Can I borrow a decimal point?", "Is FOIL a baking method?", "Does pi ever finish its sentence?",
+    "If x = y, who's winning?", "Can a graph be mad at me?", "Is a right angle never wrong?",
+    "How big is a googol in pizzas?", "Why is 'parallel' so jealous?", "Is a matrix a movie or a math?"] };
+  const CHEM = { name: "Chemistry", color: "#8a63f2", qs: [
     "Can I turn lead into gold?", "Is water just wet hydrogen?", "Is the periodic table a menu?",
-    "Do atoms get lonely?", "What if I mix every liquid?", "Is a mole an animal or 6.02e23?"] };
+    "Do atoms get lonely?", "What if I mix every liquid?", "Is a mole an animal or 6.02e23?",
+    "Why is helium so squeaky?", "Is salt just angry sodium?", "Do electrons ever take a nap?",
+    "Why won't oil and water make up?", "Is gold just fancy iron?", "Is a catalyst just a hype man?",
+    "Who named it 'noble' gas?", "Is pH a secret code?", "Do bonds have commitment issues?",
+    "Is a beaker a tiny bucket?", "Why is dry ice so cool and so dry?", "Is everything just tiny LEGO?",
+    "Can I name an element after my dog?", "Is a titration just slow pouring?"] };
   const BIO = { name: "Biology", color: "#2fbf71", qs: [
     "Do cells have feelings?", "Is a tomato a fruit? Fight me.", "Did I evolve from a potato?",
-    "Why do we even have spleens?", "Can plants hear my jokes?", "Is a virus alive or just rude?"] };
-  const PHYS = { name: "Physics", color: "#8a63f2", qs: [
+    "Why do we even have spleens?", "Can plants hear my jokes?", "Is a virus alive or just rude?",
+    "Do mitochondria get paid?", "Why do my knees crack?", "Is a mushroom a plant or a vibe?",
+    "Can I photosynthesize on the couch?", "Are bacteria my roommates?", "Why do we have an appendix?",
+    "Do fish get thirsty?", "Is DNA just a long password?", "Do trees gossip underground?",
+    "Why is pond scum so dramatic?", "Could a banana be a clone?", "Do bees vote?"] };
+  const PHYS = { name: "Physics", color: "#1f3a8a", qs: [
     "Can I outrun a light beam?", "Is gravity just the floor's opinion?", "What if friction took a day off?",
-    "Is Schrodinger's cat okay?", "Why can't I walk through walls?", "Do black holes have snacks?"] };
-  const STATS = { name: "Stats", color: "#f2a30f", qs: [
+    "Is Schrodinger's cat okay?", "Why can't I walk through walls?", "Do black holes have snacks?",
+    "Is a vacuum just empty drama?", "Can I surf a sound wave?", "Is a newton bigger than an apple?",
+    "How fast is a falling pizza?", "Do magnets have favorites?", "Is time just a long Tuesday?",
+    "What's the speed of a sneeze?", "Is inertia just laziness?", "Why do springs love to boing?",
+    "Could I power a toaster with spite?", "Is a quark a cheese?", "Can a pendulum get dizzy?"] };
+  const STATS = { name: "Stats", color: "#3d7bff", qs: [
     "Is a 50% chance just 'either way'?", "Can I trust a sample of one?", "If 9 in 10 dentists agree, who's #10?",
-    "Is the mean always so mean?", "Is correlation basically dating?", "What are the odds I pass?"] };
+    "Is the mean always so mean?", "Is correlation basically dating?", "What are the odds I pass?",
+    "Is a bell curve just a hat?", "Can outliers sit with us?", "Is 'average' an insult?",
+    "What's the median of a sandwich?", "Is p < 0.05 a vibe check?", "Can I flip a coin to pick my major?",
+    "Why is the mode so popular?", "How many data points make a friend?", "Is variance just chaos with a name?",
+    "If it rains 30%, is it 30% wet?", "Does a histogram ever rest?", "Is a z-score a grade for weirdness?"] };
   // table order, top-left to bottom-right: 3 Math, 3 Chemistry, 1 Biology, 1 Physics, 1 Stats
   const SUBJECTS = [MATH, CHEM, BIO, PHYS, MATH, CHEM, STATS, CHEM, MATH];
+
+  // what the student tutors mutter when they flop onto the couch
+  const BREAK_LINES = [
+    "I need a break.", "Gotta study for my own test...", "Need a snack. Or three.", "My brain is fried.",
+    "Five minutes. Don't tell anyone.", "I forgot how to count.", "Is it lunch yet?",
+    "I should be doing my own homework.", "Coffee. I need coffee.", "Chemistry broke me.",
+    "Who invented Mondays?", "I'm just resting my eyes."
+  ];
 
   // what students mutter on their way out when their patience runs out
   const SNARK = [
@@ -274,7 +296,8 @@
   const LOW_Y = 580;       // walkway in front of the third row
   const HOME = { x: 480, y: 724 };
   const DESK = { x: 370, y: 612, w: 220, h: 44 };
-  const HELPER_SPOTS = [{ x: 730, y: 692 }, { x: 795, y: 692 }, { x: 860, y: 692 }];
+  const HELPER_SPOTS = [{ x: 769, y: 740 }, { x: 825, y: 740 }, { x: 881, y: 740 }];   // where they stand by the couch
+  const HELPER_SEATS = [{ x: 769, y: 676 }, { x: 825, y: 676 }, { x: 881, y: 676 }];   // the couch cushions
   const MAX_HELPERS = Math.min(CONFIG.hireCosts.length, HELPER_SPOTS.length);
 
   const TABLES = [];
@@ -313,6 +336,7 @@
   addNode("door", -40, AISLE_Y); link("door", "a0");
   addNode("hub", 664, HELPER_SPOTS[0].y); link("l2", "hub");
   HELPER_SPOTS.forEach((p, i) => { addNode("h" + i, p.x, p.y); link(i === 0 ? "hub" : "h" + (i - 1), "h" + i); });
+  HELPER_SEATS.forEach((p, i) => { addNode("q" + i, p.x, p.y); link("h" + i, "q" + i); });
 
   function route(from, to) {
     const dist = {}, prev = {}, done = {};
@@ -342,6 +366,11 @@
   const SKINS = ["#f7d3b5", "#e8b48a", "#c68a5e", "#8f5a3a", "#5e3a24"];
   const HAIRS = ["#2b1a12", "#5a3a22", "#b5651d", "#e2b64d", "#3a3a4a", "#c0392b"];
   const SHIRTS = ["#ff8a5c", "#5cc8ff", "#ffd166", "#9b8cff", "#7ee081", "#ff7aa8", "#4dd0c4"];
+  const HELPER_STYLES = [
+    { hoodie: "#e0457b", cap: "#2c3350" },
+    { hoodie: "#2d4fd6", cap: "#f2b134" },
+    { hoodie: "#2bb673", cap: "#ffffff" }
+  ];
 
   // A few students wear something that says who they are. It is purely cosmetic: they play like everyone else.
   const PRIDE_PINS = [
@@ -359,7 +388,9 @@
     const r = Math.random();
     if (r < 0.13) {
       // pride pin, sometimes with dyed hair
-      return { pin: pick(PRIDE_PINS), dye: Math.random() < 0.65 ? pick(HAIR_DYES) : null };
+      const dye = Math.random() < 0.65 ? pick(HAIR_DYES) : null;
+      if (Math.random() < 0.4) return { shirtFlag: pick(PRIDE_PINS), dye };
+      return { pin: pick(PRIDE_PINS), dye };
     }
     if (r < 0.26) {
       // headphones, a rainbow infinity pin, a fidget spinner on the table
@@ -379,7 +410,7 @@
   let clock = 0;
 
   const progress = () => clamp(game.time / CONFIG.shiftSeconds, 0, 1);
-  const isSeated = (s) => s.state === "work" || s.state === "ask" || s.state === "help";
+  const isSeated = (s) => s.state === "work" || s.state === "ask" || s.state === "help" || s.state === "fume";
 
   function resetGame() {
     game.time = 0; game.score = 0; game.cash = 0; game.earned = 0; game.helped = 0; game.upset = 0;
@@ -406,7 +437,7 @@
       state: "enter",
       path: [{ x: laneX(t), y: AISLE_Y }, { x: laneX(t), y: t.cy - 12 }, { x: t.cx, y: t.cy - 12 }],
       look,
-      skin: pick(SKINS), hair: look && look.dye ? look.dye : pick(HAIRS), hairStyle: randInt(0, 2), shirt: pick(SHIRTS),
+      skin: pick(SKINS), hair: look && look.dye ? look.dye : pick(HAIRS), hairStyle: randInt(0, 2), shirt: look && look.shirtFlag ? "#f4f4ff" : pick(SHIRTS),
       qLeft: randInt(CONFIG.questionsPerStudent[0], CONFIG.questionsPerStudent[1]),
       timer: 0, patience: 1, patDur: 12, helpProg: 0,
       mood: "neutral", moodT: 0, say: "", sayT: 0,
@@ -430,8 +461,15 @@
 
   function startAsking(s) {
     const subj = s.table.subject;
-    let i;
-    do { i = randInt(0, subj.qs.length - 1); } while (i === s.lastQ && subj.qs.length > 1);
+    // draw from a shuffled deck so a question doesn't come back until the rest have been asked
+    if (!subj.deck || !subj.deck.length) {
+      subj.deck = subj.qs.map((_, k) => k);
+      for (let k = subj.deck.length - 1; k > 0; k--) {
+        const j = randInt(0, k);
+        const tmp = subj.deck[k]; subj.deck[k] = subj.deck[j]; subj.deck[j] = tmp;
+      }
+    }
+    const i = subj.deck.pop();
     s.lastQ = i;
     s.question = subj.qs[i];
     s.patDur = lerp(CONFIG.patienceStart, CONFIG.patienceEnd, progress()) * rand(0.85, 1.15);
@@ -457,11 +495,12 @@
     game.score -= CONFIG.penaltyUnhappy;
     game.upset++;
     s.say = pick(SNARK);
-    s.sayT = 3.2;
+    s.sayT = 0;
+    s.state = "fume";
+    s.fumeT = 2.4;
     floater("-" + CONFIG.penaltyUnhappy, t.cx, t.cy - 110, "#ff6b5e");
     if (!RM) game.shake = 0.25;
     sfx.upset();
-    leaveSeat(s, "angry");
   }
 
   function updateStudent(s, dt) {
@@ -480,6 +519,10 @@
       case "ask":
         s.patience -= dt / s.patDur;
         if (s.patience <= 0) { s.patience = 0; storm(s); }
+        break;
+      case "fume":
+        s.fumeT -= dt;
+        if (s.fumeT <= 0) leaveSeat(s, "angry");
         break;
       case "leave":
         if (walkPath(s, s.speed * dt)) s.done = true;
@@ -613,12 +656,11 @@
     game.cash -= cost;
     helpers.push({
       x: -40, y: AISLE_Y, node: "door", path: [], target: null, state: "idle",
-      think: 0, helpT: 0, helpDur: 1, walk: 0, dirY: 0, spot: "h" + helpers.length,
-      skin: pick(SKINS), hair: pick(HAIRS), hairStyle: randInt(0, 2), glasses: Math.random() < 0.4
+      think: 0, helpT: 0, helpDur: 1, walk: 0, dirY: 0, spot: "h" + helpers.length, seat: "q" + helpers.length, sitting: false, breakT: 0, say: "", sayT: 0,
+      skin: pick(SKINS), hair: pick(HAIRS), hairStyle: randInt(0, 1), style: HELPER_STYLES[helpers.length % HELPER_STYLES.length]
     });
     floater("-$" + cost, 150, 112, "#ff9d8f");
     sfx.hire();
-    refreshHire();
   }
 
   function isClaimed(id) {
@@ -638,6 +680,7 @@
   }
   function updateHelper(h, dt) {
     h.think -= dt;
+    if (h.sayT > 0) h.sayT -= dt;
     if (h.state === "help") {
       h.helpT += dt;
       const t = TABLES[h.target];
@@ -647,8 +690,29 @@
       if (h.helpT >= h.helpDur) {
         finishAnswer(t, s);
         h.target = null;
-        h.state = "idle";
         h.think = 0;
+        if (Math.random() < CONFIG.helperBreakChance) { h.state = "rest"; h.sitting = false; h.path = pathFor(h, h.seat); }
+        else h.state = "idle";
+      }
+      return;
+    }
+    if (h.state === "rest") {
+      // walk to the couch, flop down, grumble, rest a few seconds
+      if (h.sitting) {
+        h.breakT -= dt;
+        if (h.breakT <= 0) { h.sitting = false; h.state = "idle"; h.think = 0; }
+      } else {
+        stepAlong(h, CONFIG.helperSpeed, dt);
+        if (h.path.length === 0) {
+          if (h.node === h.seat) {
+            h.sitting = true;
+            h.breakT = span(CONFIG.helperBreak);
+            h.say = pick(BREAK_LINES);
+            h.sayT = Math.min(2.8, h.breakT);
+          } else {
+            h.path = pathFor(h, h.seat);
+          }
+        }
       }
       return;
     }
@@ -740,21 +804,7 @@
     muted = !muted;
     updateButtons();
   }
-  let hireLabel = "";
-  function refreshHire() {
-    const cost = hireCost();
-    const label = cost === null ? "Team is full" : "Hire student tutor ($" + cost + ")";
-    const off = game.state !== "play" || cost === null || game.cash < cost;
-    if (label !== hireLabel) { hireBtn.textContent = label; hireLabel = label; }
-    if (hireBtn.disabled !== off) hireBtn.disabled = off;
-    if (hireBtn.classList) hireBtn.classList.toggle("ready", !off);
-  }
-  function updateButtons() {
-    pauseBtn.disabled = !(game.state === "play" || game.state === "paused");
-    pauseBtn.textContent = game.state === "paused" ? "Resume" : "Pause";
-    soundBtn.textContent = muted ? "Sound: off" : "Sound: on";
-    refreshHire();
-  }
+  function updateButtons() { /* pause and sound are drawn in the top bar now */ }
 
   /* ---------- drawing: people ---------- */
   function drawFace(hx, hy, mood) {
@@ -846,6 +896,13 @@
     }
     ctx.fillStyle = o.shirt;
     rr(x - 21, y - 44 + bob, 42, 38, 14); ctx.fill();
+    if (L && L.shirtFlag) {
+      ctx.save();
+      rr(x - 21, y - 44 + bob, 42, 38, 14); ctx.clip();
+      const sh = 38 / L.shirtFlag.length;
+      L.shirtFlag.forEach((c, i) => { ctx.fillStyle = c; ctx.fillRect(x - 21, y - 44 + bob + i * sh, 42, sh + 0.6); });
+      ctx.restore();
+    }
     if (!o.seated) {
       const as = Math.sin(o.walk || 0) * 2.5;
       ctx.fillStyle = o.shirt;
@@ -864,9 +921,22 @@
       if (L.pin) drawPin(x + 11, y - 29 + bob, L.pin);
       if (L.infinity) drawInfinityPin(x + 11, y - 29 + bob);
     }
+    if (o.hoodie) {
+      ctx.fillStyle = "rgba(0,0,0,.16)"; rr(x - 13, y - 22 + bob, 26, 13, 6); ctx.fill();
+      ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1.6; ctx.lineCap = "round";
+      if (!back) {
+        ctx.beginPath(); ctx.moveTo(x - 5, y - 43 + bob); ctx.lineTo(x - 5, y - 33 + bob); ctx.moveTo(x + 5, y - 43 + bob); ctx.lineTo(x + 5, y - 33 + bob); ctx.stroke();
+      }
+    }
+    if (o.backpack) {
+      ctx.fillStyle = "#2c3350";
+      if (back) { rr(x - 16, y - 42 + bob, 32, 30, 9); ctx.fill(); ctx.fillStyle = "#3b4478"; rr(x - 10, y - 26 + bob, 20, 10, 4); ctx.fill(); }
+      else { rr(x - 17, y - 44 + bob, 5, 30, 2); ctx.fill(); rr(x + 12, y - 44 + bob, 5, 30, 2); ctx.fill(); }
+    }
     // hair that hangs behind the head
     if (o.hairStyle === 1) { ctx.fillStyle = o.hair; rr(hx - 19.5, hy - 12, 39, 36, 13); ctx.fill(); }
     if (o.hairStyle === 2) dot(hx, hy - 21, 7.5, o.hair);
+    if (o.hoodie) { ctx.fillStyle = o.shirt; ctx.beginPath(); ctx.ellipse(hx, hy + 19, 21, 8, 0, 0, TAU); ctx.fill(); }
     if (back) {
       dot(hx - 18, hy + 3, 3.2, o.skin);
       dot(hx + 18, hy + 3, 3.2, o.skin);
@@ -888,11 +958,17 @@
         ctx.beginPath(); ctx.moveTo(hx - 1.1, hy + 3); ctx.lineTo(hx + 1.1, hy + 3); ctx.stroke();
       }
     }
+    if (o.cap) {
+      ctx.fillStyle = o.cap;
+      ctx.beginPath(); ctx.arc(hx, hy - 3, 19.5, Math.PI * 1.02, Math.PI * 1.98); ctx.closePath(); ctx.fill();
+      if (!back) { rr(hx - 21, hy - 6, 42, 5, 2.5); ctx.fill(); }
+    }
     if (L && L.headphones) drawHeadphones(hx, hy, L.headphones);
   }
 
   function moodOf(s) {
     if (s.state === "leave") return s.mood;
+    if (s.state === "fume") return "angry";
     if (s.mood === "happy" && s.moodT > 0) return "happy";
     if (s.state === "ask") return s.patience > 0.6 ? "neutral" : s.patience > 0.3 ? "worried" : "upset";
     return "neutral";
@@ -921,12 +997,16 @@
   function drawHelper(h) {
     const helping = h.state === "help";
     const moving = h.path.length > 0;
-    const view = moving && h.dirY < -0.2 ? "back" : "front";
+    const view = !h.sitting && moving && h.dirY < -0.2 ? "back" : "front";
     const bob = helping && !RM ? Math.sin(clock * 9 + h.walk) * 1.2 : 0;
-    drawPerson(h.x, h.y, {
-      skin: h.skin, hair: h.hair, hairStyle: h.hairStyle, shirt: "#2d4fd6",
-      view, mood: helping ? "happy" : "neutral", walk: h.walk, lanyard: true, glasses: h.glasses, bob
+    ctx.save();
+    ctx.translate(h.x, h.y);
+    ctx.scale(0.86, 0.86);   // a bit smaller than you: they're younger
+    drawPerson(0, 0, {
+      skin: h.skin, hair: h.hair, hairStyle: h.hairStyle, shirt: h.style.hoodie, hoodie: true, cap: h.style.cap,
+      backpack: !h.sitting, view, mood: helping ? "happy" : "neutral", walk: h.walk, seated: h.sitting, bob
     });
+    ctx.restore();
   }
 
   /* ---------- drawing: tables ---------- */
@@ -958,8 +1038,9 @@
     lines.forEach((l, i) => text(l, x + 8, y + 17 + i * 15, 12, "#232a4d", "left"));
   }
 
-  function drawShout(x, yb, str) {
+  function drawShout(x, yb, str, calm) {
     ctx.font = "bold 13px " + FONT;
+    const bg = calm ? "#f2f6ff" : "#fff4f2", edge = calm ? "#3d4a8a" : "#c0392b", ink = calm ? "#232a4d" : "#7a1f16";
     const lines = wrapLines(str, 130);
     let w = 0;
     lines.forEach((l) => { w = Math.max(w, ctx.measureText(l).width); });
@@ -968,12 +1049,19 @@
     const bx = clamp(x - w / 2, 6, W - w - 6);
     const by = Math.max(62, yb - h - 8);
     const tx = clamp(x, bx + 12, bx + w - 12);
-    ctx.fillStyle = "#fff4f2"; ctx.strokeStyle = "#c0392b"; ctx.lineWidth = 2.5; ctx.lineJoin = "round";
+    ctx.fillStyle = bg; ctx.strokeStyle = edge; ctx.lineWidth = 2.5; ctx.lineJoin = "round";
     rr(bx, by, w, h, 9); ctx.fill(); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(tx - 6, by + h); ctx.lineTo(tx, by + h + 9); ctx.lineTo(tx + 6, by + h); ctx.closePath();
     ctx.fill(); ctx.stroke();
-    ctx.fillStyle = "#fff4f2"; ctx.fillRect(tx - 5, by + h - 2, 10, 4);
-    lines.forEach((l, i) => text(l, bx + 9, by + 17 + i * 16, 13, "#7a1f16", "left"));
+    ctx.fillStyle = bg; ctx.fillRect(tx - 5, by + h - 2, 10, 4);
+    lines.forEach((l, i) => text(l, bx + 9, by + 17 + i * 16, 13, ink, "left"));
+  }
+
+  // the front cushions, drawn after anyone sitting so they sink into the couch
+  function drawCouchFront() {
+    ctx.fillStyle = "#9b80cc"; rr(741, 664, 168, 38, 8); ctx.fill();
+    ctx.strokeStyle = "#7b5ea7"; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.moveTo(797, 666); ctx.lineTo(797, 700); ctx.moveTo(853, 666); ctx.lineTo(853, 700); ctx.stroke();
   }
 
   function drawFlag(t) {
@@ -1000,6 +1088,7 @@
       if (s.state === "work") bob = Math.sin(clock * 4 + s.bob * 3) * 1.1;
       else if (s.state === "ask") bob = Math.sin(clock * 8) * (1 + (1 - s.patience) * 2);
       else if (s.state === "help") bob = Math.sin(clock * 6) * 1.6;
+      else if (s.state === "fume") bob = Math.sin(clock * 28) * 1.6;
     }
     drawPerson(t.cx, t.cy - 12, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, look: s.look, view: "front", mood: moodOf(s), seated: true, bob });
   }
@@ -1108,12 +1197,11 @@
     dot(8, 282, 2.5, "#f2c14e");
     ctx.fillStyle = "#7b86c9"; rr(12, 266, 40, 28, 6); ctx.fill();
 
-    // waiting spots for hired student tutors
-    ctx.fillStyle = "#cfd3f0"; rr(700, 646, 200, 90, 18); ctx.fill();
-    HELPER_SPOTS.forEach((p) => {
-      ctx.fillStyle = "#b3bae6";
-      ctx.beginPath(); ctx.ellipse(p.x, p.y + 2, 26, 9, 0, 0, TAU); ctx.fill();
-    });
+    // couch in the corner, where the student tutors take their breaks
+    ctx.fillStyle = "rgba(40,40,90,.16)"; ctx.beginPath(); ctx.ellipse(825, 710, 114, 15, 0, 0, TAU); ctx.fill();
+    ctx.fillStyle = "#7b5ea7"; rr(721, 620, 208, 66, 16); ctx.fill();
+    ctx.fillStyle = "#6a4e94"; rr(721, 648, 22, 58, 9); ctx.fill(); rr(907, 648, 22, 58, 9); ctx.fill();
+    ctx.fillStyle = "#8d70bd"; rr(741, 662, 168, 40, 8); ctx.fill();
 
     // rug, desk, chair
     ctx.fillStyle = "#c3c9ee"; rr(300, DESK.y - 8, 360, 158, 26); ctx.fill();
@@ -1137,12 +1225,43 @@
     return Math.floor(sec / 60) + ":" + String(sec % 60).padStart(2, "0");
   }
 
+  const BTN_PAUSE = { x: 606, y: 10, w: 36, h: 36 };
+  const BTN_SOUND = { x: 650, y: 10, w: 36, h: 36 };
+  function drawHudButtons() {
+    const pausable = game.state === "play" || game.state === "paused";
+    ctx.fillStyle = pausable ? "#3b4478" : "#2e3566"; rr(BTN_PAUSE.x, BTN_PAUSE.y, BTN_PAUSE.w, BTN_PAUSE.h, 9); ctx.fill();
+    ctx.fillStyle = "#3b4478"; rr(BTN_SOUND.x, BTN_SOUND.y, BTN_SOUND.w, BTN_SOUND.h, 9); ctx.fill();
+    ctx.fillStyle = pausable ? "#ffffff" : "#6b73a8";
+    const px = BTN_PAUSE.x, py = BTN_PAUSE.y;
+    if (game.state === "paused") {
+      ctx.beginPath(); ctx.moveTo(px + 14, py + 10); ctx.lineTo(px + 14, py + 26); ctx.lineTo(px + 27, py + 18); ctx.closePath(); ctx.fill();
+    } else {
+      rr(px + 11, py + 10, 5, 16, 1.5); ctx.fill(); rr(px + 20, py + 10, 5, 16, 1.5); ctx.fill();
+    }
+    const sx = BTN_SOUND.x, sy = BTN_SOUND.y;
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath(); ctx.moveTo(sx + 8, sy + 14); ctx.lineTo(sx + 13, sy + 14); ctx.lineTo(sx + 19, sy + 9); ctx.lineTo(sx + 19, sy + 27); ctx.lineTo(sx + 13, sy + 22); ctx.lineTo(sx + 8, sy + 22); ctx.closePath(); ctx.fill();
+    ctx.lineWidth = 2; ctx.lineCap = "round";
+    if (muted) {
+      ctx.strokeStyle = "#ff6b5e";
+      ctx.beginPath(); ctx.moveTo(sx + 23, sy + 13); ctx.lineTo(sx + 30, sy + 23); ctx.moveTo(sx + 30, sy + 13); ctx.lineTo(sx + 23, sy + 23); ctx.stroke();
+    } else {
+      ctx.strokeStyle = "#ffffff";
+      ctx.beginPath(); ctx.arc(sx + 19, sy + 18, 5, -0.9, 0.9); ctx.stroke();
+      ctx.beginPath(); ctx.arc(sx + 19, sy + 18, 9, -0.9, 0.9); ctx.stroke();
+    }
+  }
+
   function drawHUD() {
     ctx.fillStyle = "#232a4d"; ctx.fillRect(0, 0, W, 56);
     text("Score", 24, 22, 13, "#9aa3d6", "left");
     text(String(game.score), 24, 48, 26, "#ffffff", "left");
     text("Cash", 140, 22, 13, "#9aa3d6", "left");
     text("$" + game.cash, 140, 48, 26, "#ffd23f", "left");
+    const hc = hireCost();
+    const canHire = hc !== null && game.cash >= hc && game.state === "play";
+    text("Hire tutor (H)", 250, 22, 13, "#9aa3d6", "left");
+    text(hc === null ? "Team full" : "$" + hc, 250, 48, hc === null ? 20 : 26, canHire ? "#6be39a" : "#6b73a8", "left");
     const left = CONFIG.shiftSeconds - game.time;
     const hurry = game.state === "play" && left < 15;
     text(fmtTime(left), 480, 34, 28, hurry && Math.floor(clock * 4) % 2 === 0 ? "#ff6b5e" : "#ffffff", "center");
@@ -1153,6 +1272,7 @@
     text(String(game.upset), 936, 48, 26, "#ff8479", "right");
     text("Helped", 850, 22, 13, "#9aa3d6", "right");
     text(String(game.helped), 850, 48, 26, "#6be39a", "right");
+    drawHudButtons();
   }
 
   function dim() {
@@ -1181,8 +1301,9 @@
         "When a flag goes up, they have a question.",
         "Click that table, or press the number on it.",
         "Faster help earns more points and more cash.",
-        "Spend cash on student tutors (they walk slowly).",
-        "Anyone who storms out costs you points."
+        "Press H to hire a student tutor (they walk slowly).",
+        "Anyone who storms out costs you points.",
+        "P pauses and M mutes, or use the buttons up top."
       ];
       lines.forEach((l, i) => text(l, 480, 248 + i * 31, 19, "#ffffff", "center", "normal"));
       button("Start your shift", 454);
@@ -1217,12 +1338,14 @@
     TABLES.forEach((t) => items.push({ y: t.cy, draw: () => drawTable(t) }));
     students.forEach((s) => { if (!isSeated(s)) items.push({ y: s.y, draw: () => drawWalker(s) }); });
     helpers.forEach((h) => items.push({ y: h.y, draw: () => drawHelper(h) }));
+    items.push({ y: 677.5, draw: drawCouchFront });
     items.push({ y: tutor.y, draw: drawTutor });
     items.sort((a, b) => a.y - b.y);
     items.forEach((it) => it.draw());
     students.forEach((s) => {
-      if (s.state === "leave" && s.mood === "angry" && s.sayT > 0 && s.x > 10) drawShout(s.x, s.y - 80, s.say);
+      if (s.state === "fume" && s.table) drawShout(s.table.cx, s.table.cy - 92, s.say);
     });
+    helpers.forEach((h) => { if (h.sayT > 0) drawShout(h.x, h.y - 74, h.say, true); });
     floaters.forEach((f) => {
       ctx.globalAlpha = clamp(1 - Math.pow(f.t / f.life, 3), 0, 1);
       outlinedText(f.str, f.x, f.y, 22, f.color);
@@ -1249,10 +1372,13 @@
     }
     return best;
   }
+  const inBtn = (p, b) => p.x >= b.x && p.x <= b.x + b.w && p.y >= b.y && p.y <= b.y + b.h;
   canvas.addEventListener("pointerdown", (e) => {
     ensureAudio();
-    if (game.state !== "play") { primary(); return; }
     const p = toGame(e);
+    if (inBtn(p, BTN_SOUND)) { toggleMute(); return; }
+    if (inBtn(p, BTN_PAUSE)) { if (game.state === "play" || game.state === "paused") togglePause(); return; }
+    if (game.state !== "play") { primary(); return; }
     const id = tableAt(p.x, p.y);
     if (id !== -1) requestHelp(id);
   });
@@ -1260,7 +1386,8 @@
     const p = toGame(e);
     ui.hover = game.state === "play" ? tableAt(p.x, p.y) : -1;
     const s = ui.hover !== -1 ? TABLES[ui.hover].student : null;
-    canvas.style.cursor = s && s.state === "ask" ? "pointer" : "default";
+    const overBtn = inBtn(p, BTN_SOUND) || (inBtn(p, BTN_PAUSE) && (game.state === "play" || game.state === "paused"));
+    canvas.style.cursor = (s && s.state === "ask") || overBtn ? "pointer" : "default";
   });
   canvas.addEventListener("pointerleave", () => { ui.hover = -1; canvas.style.cursor = "default"; });
   window.addEventListener("keydown", (e) => {
@@ -1280,9 +1407,6 @@
     if (k === "h" || k === "H") { hire(); return; }
     if ((k === "Enter" || k === " ") && !(e.target && e.target.tagName === "BUTTON")) { e.preventDefault(); primary(); }
   });
-  pauseBtn.addEventListener("click", () => { togglePause(); pauseBtn.blur(); });
-  soundBtn.addEventListener("click", () => { ensureAudio(); toggleMute(); soundBtn.blur(); });
-  hireBtn.addEventListener("click", () => { ensureAudio(); hire(); hireBtn.blur(); });
   document.addEventListener("visibilitychange", () => { if (document.hidden && game.state === "play") togglePause(); });
 
   /* ---------- loop ---------- */
@@ -1296,7 +1420,6 @@
     clock += dt;
     if (game.state === "play") update(dt);
     render();
-    refreshHire();
   }
   updateButtons();
   requestAnimationFrame(frame);
