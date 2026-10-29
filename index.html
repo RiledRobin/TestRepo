@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Deploy check</title>
+  <style>
+    :root {
+      --ink: #1d2433;
+      --paper: #eef2f7;
+      --line: #c9d3e0;
+      --blue: #2f6df6;
+      --green: #1fa971;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      background: var(--paper);
+      color: var(--ink);
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      line-height: 1.5;
+    }
+    main { width: 100%; max-width: 440px; }
+    h1 { margin: 0 0 8px; font-size: 2.25rem; letter-spacing: -0.02em; }
+    p { margin: 0 0 24px; max-width: 42ch; }
+    ul { list-style: none; margin: 0 0 24px; padding: 0; border-top: 1px solid var(--line); }
+    li {
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .ok { color: var(--green); font-weight: 600; }
+    .pending { color: #7b879a; }
+    canvas {
+      display: block;
+      width: 100%;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 6px;
+    }
+    canvas:focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+    small { display: block; margin-top: 8px; color: #566176; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Deploy check</h1>
+    <p>If you can read this, your GitHub repo and Cloudflare Pages are connected.</p>
+
+    <ul>
+      <li><span>Page loaded</span><span class="ok">Yes</span></li>
+      <li><span>JavaScript running</span><span id="js" class="pending">Checking</span></li>
+      <li><span>Loaded at</span><span id="time" class="pending">Checking</span></li>
+    </ul>
+
+    <canvas id="box" width="440" height="220" tabindex="0" aria-label="Test canvas: move the square with the arrow keys"></canvas>
+    <small>Click the box, then move the square with the arrow keys or WASD.</small>
+  </main>
+
+  <script>
+    // JavaScript check
+    var js = document.getElementById("js");
+    js.textContent = "Yes";
+    js.className = "ok";
+
+    var time = document.getElementById("time");
+    time.textContent = new Date().toLocaleTimeString();
+    time.className = "ok";
+
+    // Canvas and keyboard check
+    var canvas = document.getElementById("box");
+    var ctx = canvas.getContext("2d");
+    var player = { x: 200, y: 90, size: 40, speed: 4 };
+    var keys = {};
+
+    window.addEventListener("keydown", function (e) {
+      keys[e.key.toLowerCase()] = true;
+      if (e.key.indexOf("Arrow") === 0) e.preventDefault();
+    });
+    window.addEventListener("keyup", function (e) {
+      keys[e.key.toLowerCase()] = false;
+    });
+
+    function update() {
+      if (keys["arrowleft"] || keys["a"]) player.x -= player.speed;
+      if (keys["arrowright"] || keys["d"]) player.x += player.speed;
+      if (keys["arrowup"] || keys["w"]) player.y -= player.speed;
+      if (keys["arrowdown"] || keys["s"]) player.y += player.speed;
+      player.x = Math.max(0, Math.min(canvas.width - player.size, player.x));
+      player.y = Math.max(0, Math.min(canvas.height - player.size, player.y));
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = "#2f6df6";
+      ctx.fillRect(player.x, player.y, player.size, player.size);
+    }
+
+    function loop() {
+      update();
+      draw();
+      requestAnimationFrame(loop);
+    }
+    loop();
+  </script>
+</body>
+</html>
