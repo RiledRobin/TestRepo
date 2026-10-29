@@ -229,16 +229,38 @@
   }
 
   /* ---------- the room ---------- */
-  const SUBJECTS = [
-    { name: "Math",      color: "#3d7bff", qs: ["What is 7 x 8?", "What is 3/4 + 1/8?", "Solve for x: 2x = 14", "Area of a circle?"] },
-    { name: "Reading",   color: "#ff6fb0", qs: ["What's the theme?", "What's the main idea?", "Who is narrating?", "What does bleak mean?"] },
-    { name: "Science",   color: "#2fbf71", qs: ["Why is the sky blue?", "What do cells do?", "What is an atom?", "What's a food chain?"] },
-    { name: "Writing",   color: "#8a63f2", qs: ["Where's the comma?", "Is this a run-on?", "How do I start?", "Can you fix my thesis?"] },
-    { name: "History",   color: "#f2a30f", qs: ["Why did Rome fall?", "Who signed it?", "What started the war?", "When did this happen?"] },
-    { name: "Spanish",   color: "#19b5d6", qs: ["Ser or estar?", "How do I say 'where'?", "Conjugate hablar?", "What's 'dog' in Spanish?"] },
-    { name: "Chemistry", color: "#e8573f", qs: ["What's a mole?", "How do I balance this?", "What is pH?", "Why do atoms bond?"] },
-    { name: "Coding",    color: "#97a932", qs: ["Why is my loop stuck?", "What's a variable?", "What does null mean?", "Where's the typo?"] },
-    { name: "French",    color: "#3a4ea8", qs: ["Le or la?", "How do I say 'please'?", "Conjugate avoir?", "What's 'dog' in French?"] }
+  const MATH = { name: "Math", color: "#3d7bff", qs: [
+    "Is 7 lucky or just overrated?", "What if I divide by zero anyway?", "Why does x always go missing?",
+    "Can I just round pi to 3?", "Is infinity bigger on Mondays?", "Is zero a number or just vibes?"] };
+  const CHEM = { name: "Chemistry", color: "#e8573f", qs: [
+    "Can I turn lead into gold?", "Is water just wet hydrogen?", "Is the periodic table a menu?",
+    "Do atoms get lonely?", "What if I mix every liquid?", "Is a mole an animal or 6.02e23?"] };
+  const BIO = { name: "Biology", color: "#2fbf71", qs: [
+    "Do cells have feelings?", "Is a tomato a fruit? Fight me.", "Did I evolve from a potato?",
+    "Why do we even have spleens?", "Can plants hear my jokes?", "Is a virus alive or just rude?"] };
+  const PHYS = { name: "Physics", color: "#8a63f2", qs: [
+    "Can I outrun a light beam?", "Is gravity just the floor's opinion?", "What if friction took a day off?",
+    "Is Schrodinger's cat okay?", "Why can't I walk through walls?", "Do black holes have snacks?"] };
+  const STATS = { name: "Stats", color: "#f2a30f", qs: [
+    "Is a 50% chance just 'either way'?", "Can I trust a sample of one?", "If 9 in 10 dentists agree, who's #10?",
+    "Is the mean always so mean?", "Is correlation basically dating?", "What are the odds I pass?"] };
+  // table order, top-left to bottom-right: 3 Math, 3 Chemistry, 1 Biology, 1 Physics, 1 Stats
+  const SUBJECTS = [MATH, CHEM, BIO, PHYS, MATH, CHEM, STATS, CHEM, MATH];
+
+  // what students mutter on their way out when their patience runs out
+  const SNARK = [
+    "I'm leaving. I'll ask the plant.",
+    "Wow. Five stars. Not.",
+    "I aged a year waiting here.",
+    "My flag's been up since the Stone Age!",
+    "Forget it, I'll learn from a cat video.",
+    "Fine. I'll Google it. Like an adult.",
+    "Is the flag just decorative?",
+    "I've seen glaciers move faster.",
+    "Tell my GPA I said goodbye.",
+    "I could've solved it twice by now.",
+    "Enjoy your desk. Bye!",
+    "Next time I'm bringing a snack AND a nap."
   ];
 
   const COLS = [200, 480, 760];
@@ -434,6 +456,8 @@
     const t = s.table;
     game.score -= CONFIG.penaltyUnhappy;
     game.upset++;
+    s.say = pick(SNARK);
+    s.sayT = 3.2;
     floater("-" + CONFIG.penaltyUnhappy, t.cx, t.cy - 110, "#ff6b5e");
     if (!RM) game.shake = 0.25;
     sfx.upset();
@@ -878,7 +902,7 @@
     const view = s.dirY < -0.4 ? "back" : "front";
     drawPerson(s.x, s.y, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, look: s.look, view, mood: moodOf(s), walk: s.walk });
     if (s.state === "leave") {
-      if (s.mood === "angry") outlinedText("!!", s.x + 20, s.y - 78, 18, "#ff6b5e");
+      if (s.mood === "angry") { if (!(s.sayT > 0)) outlinedText("!!", s.x + 20, s.y - 78, 18, "#ff6b5e"); }
       else outlinedText("♥", s.x + 20, s.y - 78, 18, "#ffb3d1");
     }
   }
@@ -932,6 +956,24 @@
     ctx.beginPath(); ctx.moveTo(x + 1, y + h - 14); ctx.lineTo(x - 9, y + h - 5); ctx.lineTo(x + 1, y + h - 6); ctx.closePath();
     ctx.fillStyle = "#ffffff"; ctx.fill();
     lines.forEach((l, i) => text(l, x + 8, y + 17 + i * 15, 12, "#232a4d", "left"));
+  }
+
+  function drawShout(x, yb, str) {
+    ctx.font = "bold 13px " + FONT;
+    const lines = wrapLines(str, 130);
+    let w = 0;
+    lines.forEach((l) => { w = Math.max(w, ctx.measureText(l).width); });
+    w += 18;
+    const h = lines.length * 16 + 10;
+    const bx = clamp(x - w / 2, 6, W - w - 6);
+    const by = Math.max(62, yb - h - 8);
+    const tx = clamp(x, bx + 12, bx + w - 12);
+    ctx.fillStyle = "#fff4f2"; ctx.strokeStyle = "#c0392b"; ctx.lineWidth = 2.5; ctx.lineJoin = "round";
+    rr(bx, by, w, h, 9); ctx.fill(); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(tx - 6, by + h); ctx.lineTo(tx, by + h + 9); ctx.lineTo(tx + 6, by + h); ctx.closePath();
+    ctx.fill(); ctx.stroke();
+    ctx.fillStyle = "#fff4f2"; ctx.fillRect(tx - 5, by + h - 2, 10, 4);
+    lines.forEach((l, i) => text(l, bx + 9, by + 17 + i * 16, 13, "#7a1f16", "left"));
   }
 
   function drawFlag(t) {
@@ -1178,6 +1220,9 @@
     items.push({ y: tutor.y, draw: drawTutor });
     items.sort((a, b) => a.y - b.y);
     items.forEach((it) => it.draw());
+    students.forEach((s) => {
+      if (s.state === "leave" && s.mood === "angry" && s.sayT > 0 && s.x > 10) drawShout(s.x, s.y - 80, s.say);
+    });
     floaters.forEach((f) => {
       ctx.globalAlpha = clamp(1 - Math.pow(f.t / f.life, 3), 0, 1);
       outlinedText(f.str, f.x, f.y, 22, f.color);
