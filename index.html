@@ -94,6 +94,8 @@
     replantCost: 30,            // price to replace a dead plant
     admireAt: 0.15,             // a waiting student about to give up (patience below this) goes to admire a plant
     admireTime: 2.2,            // seconds they spend admiring it
+    chattyChance: 0.13,         // chance a new student is the chatty older gentleman
+    chattyHelpMult: 2,          // his questions take this many times longer to answer
     helpTime: [1.4, 2.6],       // seconds it takes to answer one question
     workTime: [5, 10],          // seconds a student works before raising the flag
     patienceStart: 18,          // seconds a student will wait, early in the shift
@@ -459,13 +461,15 @@
     const free = TABLES.filter((t) => !t.student);
     if (!free.length) return false;
     const t = pick(free);
-    const look = makeLook();
+    const elder = Math.random() < CONFIG.chattyChance;
+    const look = elder ? null : makeLook();
     const s = {
       table: t, tid: t.id, x: -30, y: AISLE_Y, dirX: 1, dirY: 0,
       state: "enter",
       path: [{ x: laneX(t), y: AISLE_Y }, { x: laneX(t), y: t.cy - 12 }, { x: t.cx, y: t.cy - 12 }],
-      look,
-      skin: pick(SKINS), hair: look && look.dye ? look.dye : pick(HAIRS), hairStyle: randInt(0, 2), shirt: look && look.shirtFlag ? "#f4f4ff" : pick(SHIRTS),
+      look, elder,
+      skin: elder ? "#f7d3b5" : pick(SKINS), hair: elder ? "#dfe3ea" : look && look.dye ? look.dye : pick(HAIRS),
+      hairStyle: elder ? 0 : randInt(0, 2), shirt: elder ? "#8a6f4d" : look && look.shirtFlag ? "#f4f4ff" : pick(SHIRTS),
       qLeft: randInt(CONFIG.questionsPerStudent[0], CONFIG.questionsPerStudent[1]),
       timer: 0, patience: 1, patDur: 12, helpProg: 0,
       mood: "neutral", moodT: 0, say: "", sayT: 0,
@@ -503,6 +507,7 @@
     s.patDur = lerp(CONFIG.patienceStart, CONFIG.patienceEnd, progress()) * rand(0.85, 1.15);
     s.patience = 1;
     s.admired = false;
+    s.chat = null;
     s.state = "ask";
     sfx.flag();
   }
@@ -685,7 +690,7 @@
     s.helpProg = 0;
     tutor.state = "help";
     tutor.helpT = 0;
-    tutor.helpDur = span(CONFIG.helpTime);
+    tutor.helpDur = span(CONFIG.helpTime) * (s.elder ? CONFIG.chattyHelpMult : 1);
   }
   function finishHelp() {
     const t = TABLES[tutor.target];
@@ -846,7 +851,7 @@
           s.helpProg = 0;
           h.state = "help";
           h.helpT = 0;
-          h.helpDur = span(CONFIG.helpTime);
+          h.helpDur = span(CONFIG.helpTime) * (s.elder ? CONFIG.chattyHelpMult : 1);
         } else {
           h.target = null;
         }
@@ -1104,17 +1109,30 @@
     if (back) {
       dot(hx - 18, hy + 3, 3.2, o.skin);
       dot(hx + 18, hy + 3, 3.2, o.skin);
-      dot(hx, hy, 18.5, o.hair);
+      dot(hx, hy, 18.5, o.elder ? o.skin : o.hair);
+      if (o.elder) { dot(hx - 17, hy - 1, 5, o.hair); dot(hx + 17, hy - 1, 5, o.hair); }
     } else {
       dot(hx, hy, 18, o.skin);
-      ctx.fillStyle = o.hair;
-      ctx.beginPath();
-      ctx.moveTo(hx - 18, hy - 2);
-      ctx.arc(hx, hy, 18.5, Math.PI, TAU);
-      ctx.quadraticCurveTo(hx + 2, hy - 14, hx - 18, hy - 2);
-      ctx.closePath();
-      ctx.fill();
+      if (o.elder) {
+        dot(hx - 17, hy - 1, 5, o.hair); dot(hx + 17, hy - 1, 5, o.hair);
+        dot(hx - 15, hy - 8, 4, o.hair); dot(hx + 15, hy - 8, 4, o.hair);
+        ctx.fillStyle = "rgba(255,255,255,.45)";
+        ctx.beginPath(); ctx.ellipse(hx - 5, hy - 12, 6, 3, -0.4, 0, TAU); ctx.fill();
+      } else {
+        ctx.fillStyle = o.hair;
+        ctx.beginPath();
+        ctx.moveTo(hx - 18, hy - 2);
+        ctx.arc(hx, hy, 18.5, Math.PI, TAU);
+        ctx.quadraticCurveTo(hx + 2, hy - 14, hx - 18, hy - 2);
+        ctx.closePath();
+        ctx.fill();
+      }
       drawFace(hx, hy, o.mood || "neutral");
+      if (o.elder) {
+        ctx.strokeStyle = o.hair; ctx.lineWidth = 3.4; ctx.lineCap = "round";
+        ctx.beginPath(); ctx.moveTo(hx - 11, hy - 2.5); ctx.lineTo(hx - 3, hy - 3.5); ctx.moveTo(hx + 3, hy - 3.5); ctx.lineTo(hx + 11, hy - 2.5); ctx.stroke();
+        ctx.fillStyle = o.hair; rr(hx - 7.5, hy + 6, 15, 4, 2); ctx.fill();
+      }
       if (o.glasses) {
         ctx.strokeStyle = "#1c1f33"; ctx.lineWidth = 1.8;
         ctx.beginPath(); ctx.arc(hx - 6.5, hy + 3, 5.4, 0, TAU); ctx.stroke();
@@ -1142,7 +1160,7 @@
 
   function drawWalker(s) {
     const view = s.dirY < -0.4 ? "back" : "front";
-    drawPerson(s.x, s.y, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, look: s.look, view, mood: moodOf(s), walk: s.walk });
+    drawPerson(s.x, s.y, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, look: s.look, elder: s.elder, glasses: s.elder, view, mood: moodOf(s), walk: s.walk });
     if (s.state === "leave") {
       if (s.mood === "angry") { if (!(s.sayT > 0)) outlinedText("!!", s.x + 20, s.y - 78, 18, "#ff6b5e"); }
       else outlinedText("♥", s.x + 20, s.y - 78, 18, "#ffb3d1");
@@ -1270,6 +1288,23 @@
     ctx.beginPath(); ctx.moveTo(797, 666); ctx.lineTo(797, 700); ctx.moveTo(853, 666); ctx.lineTo(853, 700); ctx.stroke();
   }
 
+  const OFFTOPIC = [
+    "Did you know I once met a goat?", "Is the cafeteria still serving tuna?", "Why do they call it a laptop?",
+    "Back in my day we used rocks.", "Do pigeons pay taxes?", "Is a hot dog a sandwich?",
+    "Can you help with my crossword?", "Where did I park my car?", "Do you know my nephew Gary?",
+    "Is the wifi password 'password'?", "My knee predicts the weather.", "Why's it 'tutor' and not 'tooter'?"
+  ];
+  function helpLine(s) {
+    if (!s.elder) return "Hmm, okay...";
+    if (!s.chat) {
+      const a = pick(OFFTOPIC);
+      let b;
+      do { b = pick(OFFTOPIC); } while (b === a);
+      s.chat = [a, b];
+    }
+    return s.helpProg < 0.3 ? "Hmm, okay..." : s.helpProg < 0.65 ? s.chat[0] : s.chat[1];
+  }
+
   function drawFlag(t) {
     const px = t.cx + 34, baseY = t.cy + 8, topY = t.cy - 52;
     ctx.strokeStyle = "#6b7280"; ctx.lineWidth = 3; ctx.lineCap = "round";
@@ -1296,7 +1331,7 @@
       else if (s.state === "help") bob = Math.sin(clock * 6) * 1.6;
       else if (s.state === "fume") bob = Math.sin(clock * 28) * 1.6;
     }
-    drawPerson(t.cx, t.cy - 12, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, look: s.look, view: "front", mood: moodOf(s), seated: true, bob });
+    drawPerson(t.cx, t.cy - 12, { skin: s.skin, hair: s.hair, hairStyle: s.hairStyle, shirt: s.shirt, look: s.look, elder: s.elder, glasses: s.elder, view: "front", mood: moodOf(s), seated: true, bob });
   }
 
   function drawQueueBadge(t) {
@@ -1376,7 +1411,7 @@
       drawBubble(cx + 30, cy - 104, s.question);
     } else if (s.state === "help") {
       drawMeter(mx, my, 60, 11, s.helpProg, "#4fa3ff");
-      drawBubble(cx + 30, cy - 104, "Hmm, okay...");
+      drawBubble(cx + 30, cy - 104, helpLine(s));
     } else if (s.sayT > 0) {
       drawBubble(cx + 30, cy - 104, s.say);
     }
