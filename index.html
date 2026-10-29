@@ -414,9 +414,14 @@
         "Why is everything uphill.", "Life is a long Monday.", "Every day is a worse Tuesday.",
         "I had dreams once. Now: tutoring.", "Happiness is a rumor.", "Another day, another disappointment.",
         "Existence is mostly stairs.", "Even my shoes feel sad.", "Hope is just a bad habit.",
-        "We're all just waiting to be tired.", "Time keeps going. Rude.", "Nothing ever gets easier. Sure, math."
+        "We're all just waiting to be tired.", "Time keeps going. Rude.", "Nothing ever gets easier. Sure, math.",
+        "I'm not tired. I'm just done with everything.", "Every morning is a mistake.", "Joy is a scam.",
+        "The sun came up. Great. More of this.", "I've felt better in a car wash of despair.",
+        "Nobody warned me it'd be this long.", "I'd cheer up, but why.", "Life has no refunds.",
+        "It's all fluorescent lights and regret.", "Even my coffee gave up on me.", "I've lost the will to even sigh.",
+        "Every answer just leads to more questions.", "Gravity is the only thing that cares."
       ],
-      look: { skin: "#e8b48a", hair: "#6b4a2e", hairStyle: 0, shirt: "#7a8f5a", bald: true, beard: "#5b4129", fat: true, lanyard: true } },
+      look: { skin: "#e8b48a", hair: "#14110f", hairStyle: 0, shirt: "#7a8f5a", bald: true, beard: "#1c1815", fat: true, lanyard: true, mood: "frown" } },
     { key: "devon", name: "Devon", cost: CONFIG.workerCosts.devon, subjects: [MATH, CHEM, PHYS, STATS], quirk: "Does everything but biology",
       look: { skin: "#f1c9a5", hair: "#5a3a22", hairStyle: 3, shirt: "#f48fb1", pants: "#3b6fd4", cuffs: "#f9b9d0", lanyard: true } }
   ];
@@ -1095,6 +1100,7 @@
     if (mood === "happy") ctx.arc(hx, hy + 7, 5.5, 0.15 * Math.PI, 0.85 * Math.PI);
     else if (mood === "neutral") ctx.arc(hx, hy + 8, 3.6, 0.2 * Math.PI, 0.8 * Math.PI);
     else if (mood === "worried") { ctx.moveTo(hx - 3.5, hy + 11); ctx.lineTo(hx + 3.5, hy + 11); }
+    else if (mood === "frown") ctx.arc(hx, hy + 13, 4.6, 1.3 * Math.PI, 1.7 * Math.PI);
     else ctx.arc(hx, hy + 14, 4.8, 1.2 * Math.PI, 1.8 * Math.PI);
     ctx.stroke();
     if (mood === "worried") {
@@ -1311,7 +1317,7 @@
     ctx.translate(h.x, h.y);
     ctx.scale(0.86, 0.86);   // a bit smaller than you: they're younger
     drawPerson(0, 0, Object.assign({}, h.look, {
-      backpack: h.look.backpack && !h.sitting, view, mood: helping ? "happy" : "neutral", walk: h.walk, seated: h.sitting, bob
+      backpack: h.look.backpack && !h.sitting, view, mood: h.look.mood || (helping ? "happy" : "neutral"), walk: h.walk, seated: h.sitting, bob
     }));
     ctx.restore();
   }
